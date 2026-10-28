@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sntpserver</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<link rel="apple-touch-icon" href="/favicon.ico" />
+<style>
+:root{--bg:#1a1b1e;--panel:#232429;--card:#2a2c31;--border:#34363c;--text:#e8e9ec;--muted:#9a9ca3;--accent:#4f8cff;--green:#35c26b;--red:#ff5a5a;--amber:#f0a020;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:17px;}
+.app{display:flex;min-height:100vh;}
+.side{width:240px;background:var(--panel);border-right:1px solid var(--border);padding:20px 12px;flex-shrink:0;}
+/* 品牌区：图标与程序图标同源（app.ico），保证页面内外观一致 */
+.logo{font-size:18px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px;line-height:1.2;}
+.logo-ico{width:30px;height:30px;border-radius:7px;flex-shrink:0;display:block;}
+.logo-name{white-space:nowrap;letter-spacing:.01em;}
+.nav-item{padding:11px 14px;border-radius:8px;cursor:pointer;color:var(--muted);margin-bottom:4px;font-size:17px;}
+.nav-item:hover{background:var(--card);color:var(--text);}
+.nav-item.active{background:var(--card);color:var(--accent);}
+.main{flex:1;padding:24px 28px;overflow-y:auto;}
+.topbar{display:flex;align-items:center;gap:12px;margin-bottom:22px;}
+.topbar .dot{width:11px;height:11px;border-radius:50%;background:var(--red);}
+.topbar .dot.on{background:var(--green);}
+.topbar .status{font-size:19px;font-weight:600;}
+.panel{display:none;}
+.panel.active{display:block;}
+/* 指标卡：自适应列数，窄窗口自动从 4 列降到 2/1 列，避免数字被挤断 */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:14px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}
+.card h3{font-size:15px;color:var(--muted);font-weight:500;margin-bottom:12px;letter-spacing:.02em;}
+.card .big{font-size:27px;font-weight:700;margin-bottom:6px;line-height:1.15;}
+.card .big.mono{font-family:Consolas,"Cascadia Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.card .big.wrap{font-size:21px;word-break:break-all;}
+.card .sub{font-size:14px;color:var(--muted);line-height:1.5;}
+.kv{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:16px;}
+.kv:last-child{border-bottom:none;}
+.kv .k{color:var(--muted);flex-shrink:0;}
+/* 长值优先在空格/中文处折行，而不是把 3.748897ms 从中间劈开；
+   word-break:break-word 作为老浏览器兜底（overwrap 才有 anywhere）。 */
+.kv .v{font-weight:600;text-align:right;word-break:break-word;overflow-wrap:anywhere;}
+.row{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;}
+.field{display:flex;flex-direction:column;gap:6px;font-size:16px;color:var(--muted);}
+input{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:17px;outline:none;}
+input:focus{border-color:var(--accent);}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:11px 20px;font-size:17px;cursor:pointer;}
+.btn:hover{opacity:.9;}
+.btn.secondary{background:var(--card);border:1px solid var(--border);color:var(--text);}
+.result-box{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:16px;line-height:1.6;}
+.result-box.ok{background:rgba(53,194,107,.12);border:1px solid var(--green);}
+.result-box.warn{background:rgba(240,160,32,.12);border:1px solid var(--amber);}
+.result-box.err{background:rgba(255,90,90,.12);border:1px solid var(--red);}
+.hint{font-size:15px;color:var(--muted);margin-top:10px;line-height:1.6;}
+.logs{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:Consolas,monospace;font-size:14px;line-height:1.7;white-space:pre-wrap;max-height:420px;overflow-y:auto;color:var(--muted);}
+.value.green{color:var(--green);}
+.value.red{color:var(--red);}
+.tbl{width:100%;border-collapse:collapse;font-size:16px;}
+.tbl th{text-align:left;color:var(--muted);font-weight:500;padding:12px 8px;border-bottom:1px solid var(--border);}
+.tbl td{padding:12px 8px;border-bottom:1px solid var(--border);}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl .empty{color:var(--muted);text-align:center;padding:28px 0;}
+.pager{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:15px;color:var(--muted);}
+.pager button{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-size:15px;cursor:pointer;}
+.pager button:disabled{opacity:.4;cursor:not-allowed;}
+/* 参数页：按语义分组的表单布局 */
+.form-section{margin-bottom:26px;}
+.form-section h4{font-size:16px;font-weight:600;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+/* badge 用 em 表达强调，但中文斜体会显得歪，故强制正体 */
+.form-section h4 .badge{font-style:normal;font-size:13px;font-weight:500;color:var(--amber);background:rgba(240,160,32,.12);border:1px solid rgba(240,160,32,.35);border-radius:6px;padding:1px 8px;}
+.form-section h4 .badge.muted{color:var(--muted);background:var(--bg);border-color:var(--border);}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,240px));gap:18px 20px;justify-content:start;}
+.form-grid .field{min-width:0;}
+.form-grid input{width:100%;}
+.field-name{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:16px;}
+.field .desc{font-size:14px;color:var(--muted);line-height:1.55;}
+.form-inline{display:flex;align-items:center;gap:14px;margin-top:16px;flex-wrap:wrap;}
+.form-inline .desc{font-size:14px;color:var(--muted);}
+.form-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:0;padding-top:18px;border-top:1px solid var(--border);}
+.form-actions #cfgResult{flex:1;min-width:0;}
+.form-actions .result-box{margin-top:0;}
+/* 状态总览详情区：按「授时服务 / 上游时间源」分卡，宽屏并列、窄屏堆叠 */
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:start;}
+.detail-card h3{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
+.detail-card .tag{font-size:13px;font-weight:500;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;white-space:nowrap;}
+.detail-card .note{font-size:14px;color:var(--muted);line-height:1.6;margin:2px 0 6px;}
+.detail-card .kv{padding:9px 0;min-height:46px;align-items:center;}
+/* 监听地址用「大字号值 + 右侧对齐」，与其它 KV 行同一套行高与内边距，
+   这样左右两张卡的第一行、行间节奏、末行分割线必然对齐（早期把它做成
+   独立 block，块内自带的标题行与 padding 让两卡整体错位约 27px）。 */
+.kv .v-big{font-family:Consolas,"Cascadia Mono",monospace;font-size:20px;font-weight:700;letter-spacing:-.01em;line-height:1.3;}
+/* 可访问地址用 chip 平铺——客户端要填的就是这些 IP:port；chip 高度与
+   大字号行齐平，避免把左卡拉高。 */
+.chips{display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;}
+.chip{font-family:Consolas,monospace;font-size:15px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 9px;line-height:1.3;}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap;}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;}
+.pill.ok{color:var(--green);background:rgba(53,194,107,.12);}
+.pill.err{color:var(--red);background:rgba(255,90,90,.12);}
+.pill.idle{color:var(--muted);background:var(--bg);border:1px solid var(--border);}
+/* 窄屏（手机/平板访问）：侧栏改为顶部横向导航，主区收窄留白 */
+@media (max-width:760px){
+  .app{flex-direction:column;}
+  .side{width:auto;display:flex;flex-wrap:wrap;gap:6px;border-right:none;border-bottom:1px solid var(--border);padding:14px 12px;}
+  .logo{width:100%;margin-bottom:10px;}
+  .nav-item{margin-bottom:0;padding:9px 12px;font-size:15px;}
+  .main{padding:18px 16px;}
+  .topbar{margin-bottom:16px;}
+  .detail-grid{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="side">
+    <div class="logo">
+      <img class="logo-ico" id="brandIco" alt="Sntpserver" src="data:image/png;base64,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" />
+      <span class="logo-name" id="brandName">Sntpserver</span>
+    </div>
+    <div class="nav-item active" data-panel="status">状态总览</div>
+    <div class="nav-item" data-panel="clients" id="navClients" style="display:none">用户列表</div>
+    <div class="nav-item" data-panel="client" id="navClient">校时工具</div>
+    <div class="nav-item" data-panel="settings">参数设置</div>
+    <div class="nav-item" data-panel="logs">运行日志</div>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <span class="dot" id="topDot"></span>
+      <span class="status" id="topStatus">连接中…</span>
+    </div>
+
+    <div class="panel active" id="panel-status">
+      <div class="cards">
+        <div class="card"><h3 id="ov1Label">运行状态</h3><div class="big value" id="ovRunning">—</div><div class="sub" id="ov1Sub">—</div></div>
+        <div class="card"><h3 id="ov2Label">时间层级</h3><div class="big" id="ovStratum">—</div><div class="sub" id="ov2Sub">—</div></div>
+        <div class="card"><h3 id="ov3Label">已响应请求</h3><div class="big" id="ovRequests">—</div><div class="sub" id="ov3Sub">—</div></div>
+        <div class="card"><h3>当前时间</h3><div class="big mono" id="ovTime">--:--:--</div><div class="sub" id="ovTimeSub">—</div></div>
+      </div>
+      <div class="detail-grid" id="statusDetail"></div>
+    </div>
+
+    <div class="panel" id="panel-clients">
+      <div class="card">
+        <h3>最近授时的客户端</h3>
+        <table class="tbl" id="clientsTbl">
+          <thead><tr><th>客户端 IP</th><th>授时次数</th><th>首次授时</th><th>最近授时</th></tr></thead>
+          <tbody id="clientsBody"><tr><td colspan="4" class="empty">暂无客户端接入</td></tr></tbody>
+        </table>
+        <div class="pager" id="clientsPager" style="display:none">
+          <button id="pagerPrev">上一页</button>
+          <span id="pagerInfo">1 / 1</span>
+          <button id="pagerNext">下一页</button>
+        </div>
+        <div class="hint">同一 IP 的多次授时合并为一行、次数累加；列表按最近授时时间排序，每页 15 条，最多保留 50 个客户端。</div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-client">
+      <div class="card">
+        <h3>校时工具</h3>
+        <div class="row">
+          <label class="field">服务端地址
+            <input id="clientServer" style="width:220px" />
+          </label>
+          <button class="btn" id="btnCheck">检测偏差</button>
+          <button class="btn secondary" id="btnSync">立即校时</button>
+        </div>
+        <div id="clientResult"></div>
+        <div class="hint">「检测偏差」只测量不修改时钟；「立即校时」会在偏差超阈值（默认 5秒）时拒绝自动修改，防止服务端钟错污染本机。</div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-settings">
+      <div class="card">
+        <h3>参数设置</h3>
+
+        <!-- 授时服务：仅服务端（本机即局域网权威时间源） -->
+        <section class="form-section" id="secServe" style="display:none">
+          <h4>授时服务</h4>
+          <div class="form-grid" id="serveGrid">
+            <label class="field">
+              <span class="field-name">监听地址<em class="badge">重启生效</em></span>
+              <input id="cfgListen" placeholder="0.0.0.0:123" />
+              <span class="desc">0.0.0.0 表示接受全部网卡的 NTP 请求。</span>
+            </label>
+            <label class="field" id="stratumField">
+              <span class="field-name">时间层级（stratum）</span>
+              <input id="cfgStratum" placeholder="2" />
+              <span class="desc">以本机时钟作源通常填 2，数值越小越接近权威源。</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- 上游时间源：仅服务端（可选，留空则只信本机时钟） -->
+        <section class="form-section" id="secUpstream" style="display:none">
+          <h4>上游时间源<em class="badge muted">可选</em></h4>
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-name">上游地址</span>
+              <input id="cfgUpstream" placeholder="ntp.aliyun.com" />
+              <span class="desc">留空则仅以本机硬件时钟为准，不依赖外网。</span>
+            </label>
+            <label class="field">
+              <span class="field-name">同步间隔</span>
+              <input id="cfgUpstreamInterval" placeholder="1小时" />
+              <span class="desc">后台定时向上游校时的周期，支持 30分 / 2小时。</span>
+            </label>
+          </div>
+          <div class="form-inline">
+            <button class="btn secondary" id="btnUpstreamSync">立即同步</button>
+            <span class="desc">用上方填写的地址立即校时一次，不受重启限制。</span>
+          </div>
+          <div id="upstreamResult"></div>
+          <div class="hint" id="upstreamHint">改完上游地址或间隔后，后台定时同步需重启服务才切到新配置；「立即同步」不受此限制。</div>
+        </section>
+
+        <!-- 校时目标：仅客户端（本机向服务端校时） -->
+        <section class="form-section" id="secClient">
+          <h4>校时目标</h4>
+          <div class="form-grid" id="clientGrid">
+            <label class="field" id="serverAddrField">
+              <span class="field-name">服务端地址</span>
+              <input id="cfgServer" placeholder="127.0.0.1:123" />
+              <span class="desc">可只填 IP 或域名，自动补 :123。</span>
+            </label>
+            <label class="field" id="intervalField">
+              <span class="field-name">校时间隔</span>
+              <input id="cfgInterval" placeholder="15分" />
+              <span class="desc">后台自动校时的周期，支持 15分 / 2小时。</span>
+            </label>
+            <label class="field" id="stepField">
+              <span class="field-name">校时阈值</span>
+              <input id="cfgStep" placeholder="5秒" />
+              <span class="desc">单次允许的最大跳变，偏差超过此值即拒绝自动改钟，防止被错误的源带偏。</span>
+            </label>
+          </div>
+        </section>
+
+        <div class="form-actions">
+          <div id="cfgResult"></div>
+          <button class="btn" id="btnSaveCfg">保存配置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-logs">
+      <div class="card">
+        <h3>最近日志</h3>
+        <div class="logs" id="logsBox">加载中…</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var state={status:{},time:{},logs:[],config:{},clients:[],clientPage:1};
+  function $(id){return document.getElementById(id);}
+  function api(path,opts){
+    return fetch(path,opts).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(j){
+        if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+        return j;
+      });
+    });
+  }
+  function setPanel(name){
+    document.querySelectorAll('.nav-item').forEach(function(el){
+      el.classList.toggle('active',el.getAttribute('data-panel')===name);
+    });
+    document.querySelectorAll('.panel').forEach(function(el){
+      el.classList.toggle('active',el.id==='panel-'+name);
+    });
+  }
+  function refreshStatus(){
+    return api('/api/status').then(function(s){
+      state.status=s;
+      var mode=s.mode||(s.server_running?'server':'client');
+      // 服务端模式隐藏「校时工具」标签页——服务端自身即时间源，不向别人校时。
+      var isServer=(mode==='server');
+      // 品牌名随角色切换：同一份页面服务端/客户端共用，标题不能写死。
+      $('brandName').textContent=isServer?'Sntpserver':'SntpClient';
+      document.title=isServer?'Sntpserver':'SntpClient';
+      $('navClients').style.display=isServer?'':'none';
+      $('navClient').style.display=isServer?'none':'';
+      // 参数页按语义分成三组，整组显隐即可，不再逐字段开关：
+      // 「授时服务」「上游时间源」属服务端，「校时目标」属客户端。
+      $('secServe').style.display=isServer?'':'none';
+      $('secUpstream').style.display=isServer?'':'none';
+      $('secClient').style.display=isServer?'none':'';
+      // 「时间层级」两侧都要用（服务端是对外授时层级，客户端保留字段以维持既有
+      // 字段集不变），故按模式把它移进对应的栅格，避免重复 id 或空占位。
+      placeStratumField(isServer);
+      // 若当前停留在被隐藏的面板上（如刷新后模式变化），回退到状态总览。
+      var activePanel=document.querySelector('.panel.active');
+      if(isServer && activePanel && activePanel.id==='panel-client'){
+        setPanel('status');
+      }
+      if(mode==='server'){
+        var running=s.server_running;
+        $('topDot').className='dot '+(running?'on':'');
+        $('topStatus').textContent=running?'服务端运行中':'服务端未运行';
+      }else{
+        var ok=!!s.client_server;
+        $('topDot').className='dot '+(ok?'on':'');
+        $('topStatus').textContent='客户端校时守护'+(ok?'（'+s.client_server+'）':'');
+      }
+    }).catch(function(){$('topStatus').textContent='无法连接后端';});
+  }
+  function refreshTime(){
+    return api('/api/server/time').then(function(t){state.time=t;}).catch(function(){});
+  }
+  function refreshClients(){
+    return api('/api/clients').then(function(j){state.clients=j.clients||[];}).catch(function(){state.clients=[];});
+  }
+  function refreshLogs(){
+    return api('/api/logs').then(function(j){state.logs=j.logs||[];}).catch(function(){});
+  }
+  function refreshConfig(){
+    return api('/api/config').then(function(c){state.config=c;}).catch(function(){});
+  }
+  function esc(v){
+    return String(v==null?'':v).replace(/[&<>"']/g,function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  // kvRow 渲染一行「键—值」。值有三种形态：
+  //   html  → 原样输出（状态胶囊等本包自产片段）
+  //   chips → IP:port 组，右对齐平铺
+  //   big   → 等宽大字号（监听地址这类要被抄走的值）
+  // 除 html 外一律转义：上游地址由用户填写，不能直接拼进 innerHTML。
+  function kvRow(r){
+    var v;
+    if(r.html){
+      v=String(r.html);
+    }else if(r.chips&&r.chips.length){
+      v='<span class="chips">'+r.chips.map(function(x){
+        return '<span class="chip">'+esc(x)+'</span>';
+      }).join('')+'</span>';
+    }else{
+      v='<span'+(r.big?' class="v-big"':'')+'>'+esc(r.v)+'</span>';
+    }
+    return '<div class="kv"><span class="k">'+esc(r.k)+'</span><span class="v">'+v+'</span></div>';
+  }
+  // renderDetail 把详情按语义分卡渲染：标签 + 若干行 + 可选 chip 组。
+  function renderDetail(cards){
+    $('statusDetail').innerHTML=(cards||[]).map(function(c){
+      var h='<section class="card detail-card"><h3><span>'+esc(c.title)+'</span>'
+        +(c.tag?'<span class="tag">'+esc(c.tag)+'</span>':'')+'</h3>';
+      if(c.note) h+='<p class="note">'+esc(c.note)+'</p>';
+      (c.rows||[]).forEach(function(r){h+=kvRow(r);});
+      return h+'</section>';
+    }).join('');
+  }
+  function renderStatus(){
+    var s=state.status;
+    var mode=s.mode||(s.server_running?'server':'client');
+    var platNames={windows:'Windows',linux:'Linux',darwin:'macOS'};
+    var plat=platNames[s.platform]||s.platform||'—';
+    if(mode==='server'){
+      var running=!!s.server_running;
+      $('ov1Label').textContent='运行状态';
+      $('ov2Label').textContent='时间层级';
+      $('ov3Label').textContent='已响应请求';
+      $('ovRunning').textContent=running?'运行中':'未运行';
+      $('ovRunning').className='big value '+(running?'green':'red');
+      $('ovStratum').textContent=s.stratum!=null?s.stratum:'—';
+      $('ovRequests').textContent=s.requests!=null?s.requests:'—';
+      $('ov1Sub').textContent=plat+(s.elevated?' · 已提权':' · 未提权');
+      $('ov2Sub').textContent='数值越小越接近权威源';
+      $('ov3Sub').textContent=s.last_peer?('最近客户端 '+s.last_peer):'尚无客户端接入';
+
+      // 监听地址：值是服务实际绑定的地址；「可访问地址」才是客户端该填的入口——
+      // 通配监听时列本机全部 IPv4，绑具体 IP 时就是该地址本身。
+      var addr=s.addr||'—';
+      var port=String(addr).split(':').pop()||'123';
+      var wild=(/^(0\.0\.0\.0|\[::\]|::):/.test(String(addr))||String(addr).charAt(0)===':');
+      var ips=s.local_ips||[];
+      var reach=(wild?ips.map(function(ip){return ip+':'+port;}):[addr]).filter(function(x){
+        return x&&x!=='—';
+      });
+      var serveRows=[
+        {k:'监听地址',v:addr,big:true},
+        reach.length?{k:'可访问地址',chips:reach}:{k:'可访问地址',v:'—'},
+        {k:'运行时长',v:s.uptime||'—'},
+        {k:'最近客户端',v:s.last_peer||'—'}
+      ];
+
+      var us=s.upstream_status;
+      var upRows;
+      if(s.upstream){
+        upRows=[
+          {k:'上游地址',v:s.upstream},
+          {k:'同步状态',html:us
+            ?(us.synced?'<span class="pill ok">正常</span>':'<span class="pill err">失败</span>')
+            :'<span class="pill idle">同步中</span>'},
+          {k:'同步结果',v:(us&&us.result)||'—'},
+          {k:'最近同步',v:(us&&us.last_at)||'—'}
+        ];
+      }else{
+        upRows=[
+          {k:'上游地址',v:'未配置'},
+          {k:'时间来源',v:'本机硬件时钟'},
+          {k:'同步状态',html:'<span class="pill idle">未启用</span>'}
+        ];
+      }
+
+      renderDetail([
+        {title:'授时服务',tag:running?'运行中':'未运行',rows:serveRows},
+        {title:'上游时间源',tag:s.upstream?'已启用':'未启用',
+          note:s.upstream?'':'未配置上游时间源，直接以本机硬件时钟为权威时间对外授时。',
+          rows:upRows}
+      ]);
+    }else{
+      $('ov1Label').textContent='校时目标';
+      $('ov2Label').textContent='校时间隔';
+      $('ov3Label').textContent='最近偏差';
+      $('ovRunning').textContent=s.client_server||'—';
+      $('ovRunning').className='big value wrap';
+      $('ovStratum').textContent=s.interval||'—';
+      $('ovRequests').textContent=s.last_offset||'—';
+      $('ov1Sub').textContent='向该地址请求 NTP 时间';
+      $('ov2Sub').textContent='后台自动校时周期';
+      $('ov3Sub').textContent=s.last_at?('最近校时 '+s.last_at):'尚未校时';
+      renderDetail([
+        {title:'校时目标',tag:'客户端',rows:[
+          {k:'服务端地址',v:s.client_server||'—',big:true},
+          {k:'校时间隔',v:s.interval||'—'},
+          {k:'校时阈值',v:s.step||'—'},
+          {k:'运行环境',v:plat+(s.elevated?' · 已提权':' · 未提权')}
+        ]},
+        {title:'最近校时',rows:[
+          {k:'时钟偏差',v:s.last_offset||'—'},
+          {k:'往返时延',v:s.last_delay||'—'},
+          {k:'校时结果',v:s.last_result||'—'},
+          {k:'校时时刻',v:s.last_at||'—'}
+        ]}
+      ]);
+    }
+  }
+  // 卡片只放时钟（等宽数字，避免每秒跳动），日期与 UTC 放到副标题。
+  function renderTime(){
+    var t=state.time||{};
+    var seg=String(t.local||'').split(' ');
+    var clock=(seg[1]||seg[0]||'--:--:--').replace(/\.\d+$/,'');
+    var utc=String(t.utc||'').split(' ')[1]||'—';
+    $('ovTime').textContent=clock;
+    $('ovTimeSub').textContent=(seg[0]||'—')+' · UTC '+utc.replace(/\.\d+$/,'');
+  }
+  function renderClients(){
+    var tb=$('clientsBody');tb.innerHTML='';
+    var list=state.clients||[];
+    if(!list.length){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td colspan="4" class="empty">暂无客户端接入</td>';
+      tb.appendChild(tr);
+      $('clientsPager').style.display='none';
+      return;
+    }
+    var pageSize=15;
+    var total=Math.ceil(list.length/pageSize);
+    if(state.clientPage<1) state.clientPage=1;
+    if(state.clientPage>total) state.clientPage=total;
+    var start=(state.clientPage-1)*pageSize;
+    var page=list.slice(start,start+pageSize);
+    page.forEach(function(c){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+c.addr+'</td>'
+        +'<td>'+c.count+'</td>'
+        +'<td>'+fmtTime(c.first_see)+'</td>'
+        +'<td>'+fmtTime(c.last_see)+'</td>';
+      tb.appendChild(tr);
+    });
+    var pager=$('clientsPager');
+    pager.style.display=(total>1)?'':'none';
+    $('pagerInfo').textContent='第 '+state.clientPage+' / '+total+' 页（共 '+list.length+' 条）';
+    $('pagerPrev').disabled=(state.clientPage<=1);
+    $('pagerNext').disabled=(state.clientPage>=total);
+  }
+  function setClientPage(delta){
+    state.clientPage=(state.clientPage||1)+delta;
+    renderClients();
+  }
+  function fmtTime(ts){
+    if(!ts) return '—';
+    var d=new Date(ts);
+    if(isNaN(d.getTime())) return ts;
+    function p(n){return (n<10?'0':'')+n;}
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }
+  function renderLogs(){
+    $('logsBox').textContent=state.logs.length?state.logs.join('\n'):'暂无日志';
+  }
+  // placeStratumField 把「时间层级」字段挂到当前模式对应的栅格里。
+  // 该字段两侧都要显示，但同一 id 只能有一份 DOM，故按模式搬移节点，
+  // 而不是复制出两份（会造成 id 冲突和取值歧义）。
+  function placeStratumField(isServer){
+    var field=$('stratumField');
+    var grid=$(isServer?'serveGrid':'clientGrid');
+    if(field&&grid&&field.parentNode!==grid){
+      grid.appendChild(field);
+    }
+  }
+  function renderConfig(){
+    $('cfgServer').value=state.config.server||'';
+    $('cfgInterval').value=state.config.interval||'';
+    $('cfgStep').value=state.config.step||'';
+    $('cfgStratum').value=state.config.stratum||'';
+    $('clientServer').value=state.config.server||'';
+    $('cfgListen').value=state.config.listen||'';
+    $('cfgUpstream').value=state.config.upstream||'';
+    $('cfgUpstreamInterval').value=state.config.upstream_interval||'';
+  }
+  function showResult(id,type,html){
+    var box=$(id);box.className='result-box '+type;box.innerHTML=html;
+  }
+  function doCheck(){
+    var server=$('clientServer').value;
+    return api('/api/client/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({server:server})})
+      .then(function(j){showResult('clientResult','ok','服务端 <b>'+j.server+'</b><br>时钟偏差：<b>'+j.offset+'</b> · 往返时延：'+j.delay);})
+      .catch(function(e){showResult('clientResult','err','检测失败：'+e.message);});
+  }
+  function doSync(){
+    var server=$('clientServer').value;
+    return api('/api/client/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({server:server})})
+      .then(function(j){
+        if(j.applied) showResult('clientResult','ok','已校时，本地时钟调整 <b>'+j.offset+'</b>');
+        else if(j.skipped) showResult('clientResult','warn','跳过校时：'+(j.reason||'未知原因'));
+        else showResult('clientResult','ok','无需校时（偏差 '+j.offset+'）');
+      })
+      .catch(function(e){showResult('clientResult','err','校时失败：'+e.message);});
+  }
+  function saveConfig(){
+    var isServer=(state.status.mode==='server');
+    // 服务端只需要时间层级 + 监听地址 + 上游；客户端需要地址/间隔/阈值。
+    var body={stratum:parseInt($('cfgStratum').value,10)||2};
+    if(!isServer){
+      body.server=$('cfgServer').value;
+      body.interval=$('cfgInterval').value;
+      body.step=$('cfgStep').value;
+    }else{
+      body.listen=$('cfgListen').value;
+      body.upstream=$('cfgUpstream').value;
+      body.upstream_interval=$('cfgUpstreamInterval').value;
+    }
+    return api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(c){
+        state.config=c;renderConfig();showResult('cfgResult','ok','配置已保存');
+        // 立即拉一次状态并重绘：refreshStatus 只更新 state，不负责重绘
+        // （重绘原本只在 3 秒轮询里做），这里补上，保存后总览当场刷新。
+        refreshStatus().then(renderStatus);
+      })
+      .catch(function(e){showResult('cfgResult','err','保存失败：'+e.message);});
+  }
+  // doUpstreamSync 用当前填写的上游地址手动触发一次校时。
+  // 先保存配置再同步，这样「刚填的地址」无需重启即可直接验证。
+  function doUpstreamSync(){
+    var btn=$('btnUpstreamSync');
+    var addr=$('cfgUpstream').value.trim();
+    if(!addr){
+      showResult('upstreamResult','warn','请先填写上游时间源地址');
+      return Promise.resolve();
+    }
+    btn.disabled=true;
+    btn.textContent='同步中…';
+    showResult('upstreamResult','warn','正在向上游 '+addr+' 校时…');
+    return saveConfig().then(function(){
+      return api('/api/server/upstream/sync',{method:'POST'});
+    }).then(function(j){
+      var cls=j.synced?'ok':'err';
+      var html='上游 <b>'+(j.addr||addr)+'</b> · '+(j.result||'—');
+      if(j.offset) html+='<br>时钟偏差：<b>'+j.offset+'</b>';
+      if(j.delay) html+=' · 往返时延：'+j.delay;
+      if(j.last_at) html+='<br>时间：'+j.last_at;
+      showResult('upstreamResult',cls,html);
+    }).catch(function(e){
+      showResult('upstreamResult','err','同步失败：'+e.message);
+    }).then(function(){
+      btn.disabled=false;
+      btn.textContent='立即同步';
+    });
+  }
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    el.addEventListener('click',function(){setPanel(el.getAttribute('data-panel'));});
+  });
+  $('btnCheck').addEventListener('click',doCheck);
+  $('btnSync').addEventListener('click',doSync);
+  $('btnSaveCfg').addEventListener('click',saveConfig);
+  $('btnUpstreamSync').addEventListener('click',doUpstreamSync);
+  $('pagerPrev').addEventListener('click',function(){setClientPage(-1);});
+  $('pagerNext').addEventListener('click',function(){setClientPage(1);});
+  function refreshAll(){
+    return Promise.all([refreshStatus(),refreshTime(),refreshLogs(),refreshClients()]).then(function(){renderStatus();renderTime();renderLogs();renderClients();});
+  }
+  refreshConfig().then(renderConfig).then(refreshAll);
+  setInterval(refreshAll,3000);
+})();
+</script>
+</body>
+</html>

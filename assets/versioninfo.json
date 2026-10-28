@@ -1,0 +1,40 @@
+{
+  "FixedFileInfo": {
+    "FileVersion": {
+      "Major": 1,
+      "Minor": 10,
+      "Patch": 28,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 1,
+      "Minor": 10,
+      "Patch": 28,
+      "Build": 0
+    },
+    "FileFlagsMask": "3f",
+    "FileFlags": "0",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "Comments": "无外网局域网 NTP 授时系统",
+    "CompanyName": "局域网 NTP 授时系统",
+    "FileDescription": "局域网 NTP 授时系统",
+    "FileVersion": "1.10.28",
+    "InternalName": "ntpsync",
+    "LegalCopyright": "",
+    "OriginalFilename": "",
+    "ProductName": "局域网 NTP 授时系统",
+    "ProductVersion": "1.10.28"
+  },
+  "VarFileInfo": {
+    "Translation": {
+      "LangID": "0804",
+      "CharsetID": "04B0"
+    }
+  },
+  "IconPath": "assets/app.ico",
+  "ManifestPath": ""
+}

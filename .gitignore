@@ -1,0 +1,21 @@
+# 构建产物（发布走 GitHub Release，不入库）
+/dist/
+/build/
+*.exe
+*.msi
+*.zip
+
+# Go 测试/覆盖率产物
+*.test
+*.out
+/coverage/
+
+# 本地缓存与 IDE
+.workbuddy/
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+Thumbs.db
+.DS_Store
