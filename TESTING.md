@@ -5,6 +5,25 @@
 
 ---
 
+## 〇、先跑自动化自检（跨机验收前必做）
+
+跨机验收之前，先在本机把能自动验的部分跑一遍，避免把低级错误带到现场：
+
+```bash
+bash scripts/e2e-local.sh        # 端到端安装回归：安装器字符串 + 布局 + 冒烟 + 服务名隔离
+bash scripts/package.sh --dry-run && bash scripts/check-stage.sh   # Linux 包元数据校验
+```
+
+`e2e-local.sh` 分四段：A 段把 NSIS 安装器以「不压缩、不打包文件」的方式重编一份探针，
+直接断言其中的服务名隔离、旧版服务清理、`.url` 图标指向；B 段按安装器规则重放安装布局；
+C 段真跑服务端 + 客户端打 Web API；D 段用 `status` 子命令验证两端只引用自己的服务名
+（回归「客户端卸载把服务端服务一起删掉」）。
+
+**跑不了的会明确标 SKIP 而不是判过**：注册/卸载系统服务需要管理员与 `sc.exe`，
+非管理员环境会跳过，须按本文步骤 5、6、7 人工复验。
+
+---
+
 ## 一、环境准备
 
 | 角色 | 要求 |
@@ -60,6 +79,10 @@ sc query Sntpserver & sc query SntpClient              :: Sntpserver 仍 RUNNING
 两边应当各删各的服务——这是历史 bug「卸客户端把服务端服务一起删掉」的回归点。
 
 ### 步骤 7：从 v1.0.0 升级
+
+升级会自动清理旧版服务（`ntpsyncd` / `ntpsync`）——它们若留着会和新服务抢同一个
+UDP 123 端口，表现为「装完了但校不到时」。覆盖位置：Windows 安装器、程序自身
+`install` 子命令、Linux 包的 postinst / %post 三处都有。
 旧版本（`ntpsyncd` / `ntpsync`，装在 `%ProgramFiles%\ntpsync`）升级到 1.10.28 时：
 
 ```bat

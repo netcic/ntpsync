@@ -53,6 +53,11 @@ type Handler struct {
 	Server *server.Server // 服务端守护实例（可为 nil，表示纯客户端模式）
 	Config *Config
 
+	// Version 为程序版本号，构建时用 -ldflags -X main.version= 注入。
+	// 界面上常驻显示：现场排查时第一件事就是确认「跑的到底是哪一版」，
+	// 只靠文件名判断不可靠（部署时经常被改名或复制到别处）。
+	Version string
+
 	// clientStatus 记录客户端守护的运行时状态；由客户端 daemon 周期更新。
 	clientMu     sync.Mutex
 	clientStatus *ClientStatus
@@ -173,6 +178,37 @@ func (h *Handler) staticHandler() http.Handler {
 	return http.FileServer(http.FS(sub))
 }
 
+// NormalizeListenAddr 把用户填写的 Web 监听地址补全成 host:port。
+//
+// 命令行与静默安装参数里，人们习惯只写端口（-web 8080、/WEB=8080）。直接交给
+// net.Listen 会得到 "missing port in address"，而报错信息完全没提示「要写成
+// 127.0.0.1:8080」，现场很难自查。这里统一补上回环地址，让两种写法都能用。
+// IPv6 的 [::1]:8080 本身含冒号，原样返回。
+func NormalizeListenAddr(addr string) string {
+	a := strings.TrimSpace(addr)
+	if a == "" {
+		return ""
+	}
+	if !strings.Contains(a, ":") {
+		return "127.0.0.1:" + a
+	}
+	return a
+}
+
+// displayVersion 把版本号规整成界面上显示的形态。
+// 未注入版本（go run 或开发构建）时显示「开发版」，避免界面上出现 dev 这种
+// 对现场无意义、又容易被误认为是版本号的字样。
+func displayVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "dev" {
+		return "开发版"
+	}
+	if strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
+}
+
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
@@ -191,6 +227,7 @@ func (h *Handler) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"server_running": false,
 		"platform":       pal.NewPlatform().Name(),
 		"elevated":       pal.NewPlatform().IsElevated(),
+		"version":        displayVersion(h.Version),
 	}
 	if h.Server != nil {
 		resp["server_running"] = h.Server.IsRunning()
@@ -250,7 +287,32 @@ func (h *Handler) apiClients(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []server.ClientInfo{}
 	}
+	if strings.EqualFold(r.URL.Query().Get("format"), "csv") {
+		writeClientsCSV(w, list, h.Version)
+		return
+	}
 	writeJSON(w, map[string]interface{}{"clients": list})
+}
+
+// writeClientsCSV 把客户端列表导出成 CSV。
+//
+// 两个细节来自现场反馈：① 加 UTF-8 BOM，否则 Excel 打开中文全是乱码；
+// ② 行尾用 CRLF，Excel 才按单元格分行。文件名带时间戳，多次导出不会互相覆盖。
+func writeClientsCSV(w http.ResponseWriter, list []server.ClientInfo, version string) {
+	name := fmt.Sprintf("ntp-clients-%s.csv", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// UTF-8 BOM：Excel 靠它判断编码，少了这 3 字节中文就是乱码。
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	fmt.Fprintf(w, "# 局域网 NTP 授时统计  版本=%s  导出时间=%s\r\n",
+		displayVersion(version), time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprint(w, "客户端 IP,授时次数,首次授时,最近授时\r\n")
+	for _, c := range list {
+		fmt.Fprintf(w, "%s,%d,%s,%s\r\n",
+			c.Addr, c.Count,
+			c.FirstSee.Format("2006-01-02 15:04:05"),
+			c.LastSee.Format("2006-01-02 15:04:05"))
+	}
 }
 
 // apiUpstreamSync 手动触发一次上游校时（仅服务端模式且已配置上游时间源）。
@@ -550,5 +612,15 @@ func (h *Handler) apiLogs(w http.ResponseWriter, r *http.Request) {
 	logs := make([]string, len(h.logBuf))
 	copy(logs, h.logBuf)
 	h.mu.Unlock()
+	// 现场排障常要把日志发给别人看，提供纯文本下载（带时间戳文件名）。
+	if strings.EqualFold(r.URL.Query().Get("format"), "txt") {
+		name := fmt.Sprintf("ntp-logs-%s.txt", time.Now().Format("20060102-150405"))
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+		for _, l := range logs {
+			fmt.Fprintln(w, l)
+		}
+		return
+	}
 	writeJSON(w, map[string]interface{}{"logs": logs})
 }

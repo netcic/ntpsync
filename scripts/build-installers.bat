@@ -3,7 +3,7 @@ REM ============================================================================
 REM  build-installers.bat - 生成 Windows 独立安装器（NSIS）
 REM
 REM  用法（在项目根目录运行）:
-REM    scripts\build-installers.bat              # 用默认版本 1.10.28
+REM    scripts\build-installers.bat              # 版本读根目录 VERSION 文件
 REM    scripts\build-installers.bat 1.10.29      # 指定版本号
 REM
 REM  前置: 已运行 scripts\build.sh 产出 dist\*-v<ver>-windows-*.exe
@@ -18,6 +18,10 @@ REM ============================================================================
 setlocal EnableExtensions
 
 set "VERSION=%~1"
+if "%VERSION%"=="" (
+  REM 未指定版本时读根目录 VERSION 文件（版本号唯一来源）
+  if exist "%~dp0..\VERSION" for /f "usebackq delims=" %%v in ("%~dp0..\VERSION") do if not defined VERSION set "VERSION=%%v"
+)
 if "%VERSION%"=="" set "VERSION=1.10.28"
 
 set "NSI=%~dp0..\packaging\win\ntp-installer.nsi"

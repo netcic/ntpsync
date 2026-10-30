@@ -211,16 +211,16 @@ Section "主程序文件" SecMain
 
   WriteUninstaller "$INSTDIR\${UNINST_NAME}"
 
-  ; ---- 开始菜单：参数页删掉后，Web 管理页面是唯一的配置入口，必须好找 ----
+  ; ---- 开始菜单：只放一个「产品名.url」快捷方式，直接落在开始菜单根目录（不再套一层
+  ;      产品子文件夹）。Web 管理页面是唯一的配置入口，名字就用产品名 Sntpserver /
+  ;      SntpClient，用户一眼能认出来。卸载统一走控制面板「添加/删除程序」，开始菜单
+  ;      不再单独放「卸载」快捷方式，避免与产品名快捷方式并列造成混淆。 ----
   DetailPrint "创建开始菜单项…"
-  CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
-  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}\Web 管理页面.url" "InternetShortcut" "URL" "http://127.0.0.1:$WebPort"
+  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}.url" "InternetShortcut" "URL" "http://127.0.0.1:$WebPort"
   ; .url 默认用浏览器图标，看不出是咱们的程序。IconFile/IconIndex 指向本机 exe
-  ; （图标已内嵌在 exe 里）：不额外复制 ico 到安装目录 —— 两个产品默认同目录，
-  ; 共用一份 ico 会在其中一方卸载时被删，另一方的快捷方式又退回浏览器图标。
-  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}\Web 管理页面.url" "InternetShortcut" "IconFile" "$INSTDIR\${BIN_NAME}.exe"
-  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}\Web 管理页面.url" "InternetShortcut" "IconIndex" "0"
-  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\卸载 ${PRODUCT_NAME}.lnk" "$INSTDIR\${UNINST_NAME}"
+  ; （图标已内嵌在 exe 里），不额外复制 ico 到安装目录。
+  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}.url" "InternetShortcut" "IconFile" "$INSTDIR\${BIN_NAME}.exe"
+  WriteINIStr "$SMPROGRAMS\${PRODUCT_NAME}.url" "InternetShortcut" "IconIndex" "0"
 SectionEnd
 
 ; ============================================================================
@@ -289,7 +289,7 @@ Section "Uninstall"
   !endif
 
   DetailPrint "删除程序文件…"
-  RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
+  Delete "$SMPROGRAMS\${PRODUCT_NAME}.url"
   Delete "$INSTDIR\${BIN_NAME}.exe"
   Delete "$INSTDIR\${UNINST_NAME}"
   ; 目录按产品分开后，卸载器也各删各的，不需要再判断「对方装了没」。

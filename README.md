@@ -211,6 +211,18 @@ Web 参数页保存后**立即生效**（守护循环当场按新间隔重排，
 
 ---
 
+### 版本显示与运维导出
+
+- **版本号**：界面左上角品牌名旁常驻显示，状态总览里也有一行「程序版本」。
+  版本由构建时注入（`-ldflags -X main.version`），未注入的开发构建显示「开发版」，
+  不会把 `dev` 这种内部字样当成版本号显示给现场。
+- **授时统计持久化**：按 IP 累计的授时次数每 30 秒落盘一次（与配置文件同目录的
+  `Sntpserver-clients.json`），服务重启不清零。进程被强制杀死时最多丢最后一个周期。
+- **导出**：用户列表页「导出 CSV」（带 UTF-8 BOM，Excel 打开不乱码、正确分行）；
+  运行日志页「下载日志」导出纯文本，便于发给他人排查。
+
+---
+
 ## 五、Web 管理界面
 
 服务端与客户端**各自内嵌**一套 Web 管理界面（同一套深色卡片式 UI，按角色自适应显示）：
@@ -230,6 +242,9 @@ Web 参数页保存后**立即生效**（守护循环当场按新间隔重排，
 | **日志** | 环形日志缓冲，实时查看运行记录 |
 
 > 默认只绑定 `127.0.0.1`（仅本机访问）。如需远程访问请改绑 `0.0.0.0` 并放行对应 TCP 端口。
+
+**配色主题**：侧栏底部「配色主题」可一键切换「默认（蓝）/ 暖橙+深灰 / 海军蓝+渐变」三套配色，
+选择记在浏览器本地（localStorage），下次打开沿用。主要按钮带悬停变色 + 放大效果。
 
 ---
 
@@ -318,8 +333,12 @@ Web 参数页保存后**立即生效**（守护循环当场按新间隔重排，
 开发环境需 Go 1.23+。一键交叉编译全矩阵：
 
 ```bash
-bash scripts/build.sh 1.10.28
+bash scripts/build.sh
 ```
+
+版本号统一写在根目录的 **`VERSION`** 文件里（当前 `1.10.28`），构建、打包、安装器、
+Windows 版本资源全部从它读取，升版只改这一处。需要临时编一个别的版本时把版本号
+作为参数传入即可覆盖：`bash scripts/build.sh 1.10.29`。
 
 产物输出到 `dist/`，覆盖 Windows / Linux × amd64 / arm64 共 8 个二进制，文件名一律带版本号：`Sntpserver-v1.10.28-windows-amd64.exe`、`SntpClient-v1.10.28-linux-arm64` 等；不带版本号的旧式副本不再产出。
 
@@ -331,7 +350,7 @@ bash scripts/build.sh 1.10.28
 
 ```bash
 scoop install nsis            # 一次性安装 NSIS
-scripts/build-installers.bat 1.10.28
+scripts/build-installers.bat
 ```
 
 产出 4 个安装器：`Sntpserver-setup-*` / `SntpClient-setup-*` × amd64/arm64，双击即装、控制面板可卸载。
@@ -340,9 +359,18 @@ scripts/build-installers.bat 1.10.28
 
 ```bash
 # 在任意带打包工具的 Linux 机（Debian/Ubuntu 装 dpkg，红帽/麒麟装 rpm-build）：
-CLIENT_SERVER=192.168.1.10:123 bash scripts/package.sh 1.10.28
+CLIENT_SERVER=192.168.1.10:123 bash scripts/package.sh
 ```
 
 产出服务端/客户端 × amd64/arm64 × deb/rpm，`dpkg -i` / `rpm -i` 安装即自启。
+
+**打包自检**（没有 dpkg/rpm 也能验）：先在任意机器生成待校验目录树，再做字段级校验，
+能在「还没到 Linux 打包机上」就发现 control 字段、spec 的 `%files`、systemd 单元
+参数写错这类问题：
+
+```bash
+bash scripts/package.sh --dry-run    # 生成 dist/pkgstage/
+bash scripts/check-stage.sh          # 校验元数据与单元文件，全过才继续
+```
 
 > 详细分发与静默部署见 [`DEPLOY.md`](DEPLOY.md)。

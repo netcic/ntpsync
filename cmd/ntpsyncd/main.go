@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,12 @@ import (
 	"ntpsync/internal/service"
 	"ntpsync/internal/web"
 )
+
+// version 为本程序的版本号，构建时由 build.sh 用
+// -ldflags "-X main.version=<VERSION 文件内容>" 注入。
+// 保持默认值 dev：go run 或手工 go build 时界面显示「开发版」，
+// 不会把一个假版本号当成真版本显示给现场。
+var version = "dev"
 
 // serverOptions 汇总 run 子命令的运行参数。
 // 取值优先级：命令行显式参数 > 配置文件 > 内置默认值。
@@ -171,6 +178,24 @@ func removeServerService(p pal.Platform) (removed bool, err error) {
 	return true, nil
 }
 
+// displayVersion 供日志与界面复用：未注入版本时显示「开发版」。
+func displayVersion() string {
+	if version == "" || version == "dev" {
+		return "开发版"
+	}
+	return "v" + strings.TrimPrefix(version, "v")
+}
+
+// clientStatsPath 授时统计文件的路径：与配置文件同目录，便于一起备份/迁移。
+// 文件名带产品名前缀，与客户端（若同机）区分开。
+func clientStatsPath(cfgPath string) string {
+	dir := filepath.Dir(cfgPath)
+	if dir == "" || dir == "." {
+		dir = "."
+	}
+	return filepath.Join(dir, "Sntpserver-clients.json")
+}
+
 func usage() {
 	fmt.Fprint(os.Stderr, `Sntpserver - 局域网 NTP 授时服务端
 
@@ -243,10 +268,41 @@ func runServer(ctx context.Context, opts serverOptions) error {
 		Upstream:         opts.Upstream,
 		UpstreamInterval: opts.UpstreamInterval,
 	})
+	// 授时统计落盘：服务重启不清零，现场才能看出某台设备是否在按时校时。
+	// 恢复失败只记日志——统计数据丢得起，授时本身不能因此起不来。
+	statsPath := clientStatsPath(opts.ConfigPath)
+	if err := s.LoadClients(statsPath); err != nil {
+		log.Printf("读取授时统计失败（本次从零开始累计）：%v", err)
+	}
+	// 定时保存：写盘频率与授时频率解耦，避免把 IO 压力压到 NTP 应答路径上。
+	statsDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		defer close(statsDone)
+		for {
+			select {
+			case <-ctx.Done():
+				_ = s.SaveClients(statsPath)
+				return
+			case <-ticker.C:
+				if err := s.SaveClients(statsPath); err != nil {
+					log.Printf("保存授时统计失败：%v", err)
+				}
+			}
+		}
+	}()
 	if err := s.Start(); err != nil {
 		return err
 	}
-	defer s.Stop()
+	defer func() {
+		s.Stop()
+		// 退出前再存一次，把最后半分钟内的计数也留住。
+		if err := s.SaveClients(statsPath); err != nil {
+			log.Printf("退出前保存授时统计失败：%v", err)
+		}
+		<-statsDone
+	}()
 	// 上游同步循环无条件启动：Web 参数页可在运行期补配上游，循环每轮重读配置。
 	// 同步地址用闭包动态取 s.Upstream()，保证界面改完立即按新地址校时。
 	s.StartUpstreamSync(func() {
@@ -262,6 +318,7 @@ func runServer(ctx context.Context, opts serverOptions) error {
 	// 可选：启动 Web 管理界面。
 	var h *web.Handler
 	var webSrv *http.Server
+	opts.Web = web.NormalizeListenAddr(opts.Web)
 	if opts.Web != "" {
 		webCfg := &web.Config{
 			Listen:  opts.Listen,
@@ -271,6 +328,9 @@ func runServer(ctx context.Context, opts serverOptions) error {
 			UpstreamInterval: duration.Format(opts.UpstreamInterval),
 		}
 		h = web.New(s, webCfg)
+		h.Version = version
+		// 界面日志缓冲只收 Logf 的内容，补一条启动记录，避免「下载日志」下到空文件。
+		h.Logf("NTP 服务端已启动 版本=%s 监听=%s stratum=%d", displayVersion(), s.Addr(), s.Stratum())
 		// 注入「立即同步」执行函数：供 Web 参数页的手动校时按钮调用。
 		// 地址由 Web 侧传入（可能是刚改完还没重启的新地址），无返回值——
 		// 成功/失败详情统一写入服务端上游状态，由接口读取后回显。
@@ -379,6 +439,13 @@ func installService(listen string, stratum uint8, manual bool, webAddr string, n
 	if manual {
 		startType = "manual"
 	}
+	// 从 v1.0.x 升级：旧服务 ntpsyncd 若还挂着，会同新服务抢 UDP 123。
+	// 清不掉也不该中断安装——记一条日志，装新的照样装。
+	if removed, err := pal.CleanupLegacyService(p, pal.LegacyServerServiceName); err != nil {
+		log.Printf("清理旧版服务 %s 失败（不影响本次安装）：%v", pal.LegacyServerServiceName, err)
+	} else if removed {
+		log.Printf("已清理旧版服务 %s（v1.0.x 遗留）", pal.LegacyServerServiceName)
+	}
 	cfgPath := config.DefaultPath()
 
 	// 保留模式判定：只有「要求保留 + 文件确实存在 + 能读出来」三者同时成立才保留。
@@ -423,7 +490,7 @@ func installService(listen string, stratum uint8, manual bool, webAddr string, n
 	}
 	cfg := pal.ServiceConfig{
 		Name:        pal.DefaultServiceName,
-		DisplayName: "Sntpserver",
+		DisplayName: pal.DefaultServiceName,
 		Description: "把本机硬件时钟作为权威时间源，向局域网设备提供 NTP 授时",
 		BinPath:     exe,
 		Args:        args,

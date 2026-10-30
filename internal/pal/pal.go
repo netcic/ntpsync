@@ -95,6 +95,34 @@ const (
 	ClientServiceName = "SntpClient"
 )
 
+// 旧版本（v1.0.x）遗留的服务名。1.10.28 起了新名字，但老机器上装过的旧服务不会
+// 自己消失：它会和新服务抢同一个 UDP 123 端口，表现为「装完了，服务也跑着，
+// 但客户端就是校不到时」。所以每次安装新服务前都要先把它清掉。
+const (
+	// LegacyServerServiceName 旧版服务端服务名。
+	LegacyServerServiceName = "ntpsyncd"
+	// LegacyClientServiceName 旧版客户端服务名。
+	LegacyClientServiceName = "ntpsync"
+)
+
+// CleanupLegacyService 清理旧版本遗留的服务。
+//
+// 与正常卸载不同，这里「服务本来就不存在」是绝大多数情况（新机器首次安装），
+// 不能把它当错误往上抛，否则每次全新安装都会失败。真正的失败（权限不足等）
+// 才返回错误，由调用方决定是中断还是只记日志。
+func CleanupLegacyService(p Platform, legacyName string) (bool, error) {
+	if legacyName == "" {
+		return false, nil
+	}
+	if err := p.UninstallService(legacyName); err != nil {
+		if errors.Is(err, ErrServiceNotInstalled) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // checkServiceName 拦截空服务名。
 // 空串交给 sc.exe/systemctl 会变成语法错误，更糟的是在「有默认名兜底」的旧实现里
 // 会静默操作到别人的服务上——所以宁可直接拒绝。

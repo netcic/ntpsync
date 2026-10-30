@@ -118,3 +118,67 @@ func TestCheckServiceName(t *testing.T) {
 		t.Errorf("合法服务名不应报错: %v", err)
 	}
 }
+
+// stubPlatform 只实现 CleanupLegacyService 用得到的那一个方法。
+// 嵌入 Platform 接口即可：未覆盖的方法保持 nil，测试里不会调到，
+// 比为了一个用例去实现十几个接口方法划算得多。
+type stubPlatform struct {
+	Platform
+	calls        []string
+	uninstallErr error
+}
+
+func (s *stubPlatform) UninstallService(name string) error {
+	s.calls = append(s.calls, name)
+	return s.uninstallErr
+}
+
+// TestLegacyServiceNamesDifferFromCurrent 守住一条底线：旧服务名绝不能与现役服务名
+// 相同。一旦相同，升级清理就会把刚装好的新服务自己删掉。
+func TestLegacyServiceNamesDifferFromCurrent(t *testing.T) {
+	if LegacyServerServiceName == DefaultServiceName {
+		t.Fatalf("旧版服务端服务名与现役同名（%s），升级清理会误删新服务", DefaultServiceName)
+	}
+	if LegacyClientServiceName == ClientServiceName {
+		t.Fatalf("旧版客户端服务名与现役同名（%s），升级清理会误删新服务", ClientServiceName)
+	}
+	if LegacyServerServiceName == ClientServiceName || LegacyClientServiceName == DefaultServiceName {
+		t.Fatalf("新旧服务名发生交叉：server=%s/%s client=%s/%s",
+			LegacyServerServiceName, DefaultServiceName, LegacyClientServiceName, ClientServiceName)
+	}
+}
+
+// TestCleanupLegacyService 覆盖升级清理的三种结局：删掉了 / 本来就没有 / 真出错。
+func TestCleanupLegacyService(t *testing.T) {
+	cases := []struct {
+		name      string
+		legacy    string
+		err       error
+		wantDel   bool
+		wantErr   bool
+		wantCalls int
+	}{
+		{name: "旧服务存在并被清掉", legacy: "ntpsyncd", err: nil, wantDel: true, wantCalls: 1},
+		{name: "旧服务不存在不算错", legacy: "ntpsyncd", err: ErrServiceNotInstalled, wantDel: false, wantCalls: 1},
+		{name: "权限不足要如实上报", legacy: "ntpsyncd", err: ErrNotElevated, wantDel: false, wantErr: true, wantCalls: 1},
+		{name: "空名直接跳过不调用", legacy: "", err: nil, wantDel: false, wantCalls: 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := &stubPlatform{uninstallErr: c.err}
+			got, err := CleanupLegacyService(st, c.legacy)
+			if c.wantErr && err == nil {
+				t.Fatalf("期望返回错误，实际为 nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("期望无错误，实际: %v", err)
+			}
+			if got != c.wantDel {
+				t.Fatalf("删除结果 = %v，期望 %v", got, c.wantDel)
+			}
+			if len(st.calls) != c.wantCalls {
+				t.Fatalf("UninstallService 调用 %d 次，期望 %d 次（calls=%v）", len(st.calls), c.wantCalls, st.calls)
+			}
+		})
+	}
+}

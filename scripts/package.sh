@@ -34,7 +34,8 @@ for arg in "$@"; do
     *) VERSION="$arg" ;;
   esac
 done
-VERSION="${VERSION:-1.10.28}"
+VERSION="${VERSION:-$(tr -d ' \t\r\n' < VERSION 2>/dev/null || true)}"
+[ -n "$VERSION" ] || { echo "错误：未指定版本且根目录无 VERSION 文件。" >&2; exit 1; }
 
 CLIENT_SERVER="${CLIENT_SERVER:-127.0.0.1:123}"
 CLIENT_INTERVAL="${CLIENT_INTERVAL:-15分}"
@@ -170,9 +171,15 @@ Maintainer: NTP Sync <admin@local>
 Description: $M_DISPLAY
  $M_DESC
 EOF
+    # 旧版服务名（v1.0.x）：升级时旧服务不会自己消失，会和新服务抢 UDP 123。
+    # Windows 安装器里已做同样处理（见 ntp-installer.nsi 的 LEGACY_SERVICE 段）。
+    if [ "$role" = "server" ]; then legacy="ntpsyncd"; else legacy="ntpsync"; fi
     cat > "$deb_root/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
+systemctl stop $legacy >/dev/null 2>&1 || true
+systemctl disable $legacy >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/$legacy.service
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable $bin >/dev/null 2>&1 || true
 exit 0
@@ -210,6 +217,9 @@ install -m 0755 $repo_root/$src %{buildroot}/usr/local/bin/$bin
 cp $pkg_root_abs/usr/lib/systemd/system/${bin}.service %{buildroot}/usr/lib/systemd/system/
 
 %post
+systemctl stop $legacy >/dev/null 2>&1 || true
+systemctl disable $legacy >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/$legacy.service
 systemctl daemon-reload || true
 systemctl enable $bin || true
 

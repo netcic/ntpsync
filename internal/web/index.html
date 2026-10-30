@@ -7,18 +7,53 @@
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <link rel="apple-touch-icon" href="/favicon.ico" />
 <style>
-:root{--bg:#1a1b1e;--panel:#232429;--card:#2a2c31;--border:#34363c;--text:#e8e9ec;--muted:#9a9ca3;--accent:#4f8cff;--green:#35c26b;--red:#ff5a5a;--amber:#f0a020;}
+:root{
+  --bg:#1a1b1e;--panel:#232429;--card:#2a2c31;--border:#34363c;
+  --text:#e8e9ec;--muted:#9a9ca3;--accent:#4f8cff;--accent-hover:#6ba0ff;
+  --green:#35c26b;--red:#ff5a5a;--amber:#f0a020;
+  --primary-text:#fff;
+  --side-grad:var(--panel);
+  --btn-grad:var(--accent);
+  --card-shadow:0 1px 3px rgba(0,0,0,.35);
+}
+/* 暖橙 + 深灰：暖色调深灰底，强调色换成暖橙 */
+[data-theme="orange"]{
+  --bg:#1d1c1a;--panel:#27241f;--card:#322d27;--border:#3e382f;
+  --text:#f3efe9;--muted:#a39c92;--accent:#ff8a3d;--accent-hover:#ffa25e;
+  --green:#3fc573;--red:#ff6b5e;--amber:#f5b13d;
+  --side-grad:var(--panel);
+  --btn-grad:var(--accent);
+  --card-shadow:0 1px 3px rgba(0,0,0,.4);
+}
+/* 海军蓝 + 渐变：深海军蓝底，侧栏与主要按钮用蓝色渐变强调视觉层次 */
+[data-theme="navy"]{
+  --bg:#0c1622;--panel:#112033;--card:#16263b;--border:#22364f;
+  --text:#e8f0fb;--muted:#8ea3bf;--accent:#3b82f6;--accent-hover:#60a0ff;
+  --green:#34d399;--red:#f87171;--amber:#fbbf24;
+  --side-grad:linear-gradient(180deg,#0e1b2e 0%,#102844 100%);
+  --btn-grad:linear-gradient(135deg,#1e3a8a 0%,#3b82f6 100%);
+  --card-shadow:0 2px 12px rgba(0,0,0,.45);
+}
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:17px;}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:17px;transition:background .2s ease,color .2s ease;}
 .app{display:flex;min-height:100vh;}
-.side{width:240px;background:var(--panel);border-right:1px solid var(--border);padding:20px 12px;flex-shrink:0;}
+.side{width:240px;background:var(--side-grad);border-right:1px solid var(--border);padding:20px 12px;flex-shrink:0;display:flex;flex-direction:column;}
 /* 品牌区：图标与程序图标同源（app.ico），保证页面内外观一致 */
 .logo{font-size:18px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px;line-height:1.2;}
 .logo-ico{width:30px;height:30px;border-radius:7px;flex-shrink:0;display:block;}
 .logo-name{white-space:nowrap;letter-spacing:.01em;}
-.nav-item{padding:11px 14px;border-radius:8px;cursor:pointer;color:var(--muted);margin-bottom:4px;font-size:17px;}
+/* 版本号角标：常驻可见，现场第一件事就是确认跑的是哪一版 */
+.logo-ver{font-size:13px;font-weight:400;color:var(--muted);align-self:flex-end;padding-bottom:1px;}
+.nav-item{padding:11px 14px 11px 11px;border-left:3px solid transparent;border-radius:8px;cursor:pointer;color:var(--muted);margin-bottom:4px;font-size:17px;transition:background .15s ease,color .15s ease,border-color .15s ease;}
 .nav-item:hover{background:var(--card);color:var(--text);}
-.nav-item.active{background:var(--card);color:var(--accent);}
+.nav-item.active{background:var(--card);color:var(--accent);font-weight:600;border-left-color:var(--accent);}
+/* 配色主题切换：侧栏底部，分段控件样式，随主题高亮当前选项 */
+.theme-switch{margin-top:auto;padding-top:18px;border-top:1px solid var(--border);}
+.theme-label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px;letter-spacing:.02em;}
+.theme-opts{display:flex;gap:6px;}
+.theme-opt{flex:1;background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:7px 4px;font-size:13px;cursor:pointer;transition:transform .12s ease,color .15s ease,border-color .15s ease,background .15s ease;}
+.theme-opt:hover{transform:scale(1.05);color:var(--text);border-color:var(--accent);}
+.theme-opt.active{background:var(--accent);border-color:var(--accent);color:var(--primary-text);font-weight:600;}
 .main{flex:1;padding:24px 28px;overflow-y:auto;}
 .topbar{display:flex;align-items:center;gap:12px;margin-bottom:22px;}
 .topbar .dot{width:11px;height:11px;border-radius:50%;background:var(--red);}
@@ -28,7 +63,7 @@ body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft Ya
 .panel.active{display:block;}
 /* 指标卡：自适应列数，窄窗口自动从 4 列降到 2/1 列，避免数字被挤断 */
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:14px;}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--card-shadow);}
 .card h3{font-size:15px;color:var(--muted);font-weight:500;margin-bottom:12px;letter-spacing:.02em;}
 .card .big{font-size:27px;font-weight:700;margin-bottom:6px;line-height:1.15;}
 .card .big.mono{font-family:Consolas,"Cascadia Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
@@ -44,9 +79,11 @@ body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft Ya
 .field{display:flex;flex-direction:column;gap:6px;font-size:16px;color:var(--muted);}
 input{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:17px;outline:none;}
 input:focus{border-color:var(--accent);}
-.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:11px 20px;font-size:17px;cursor:pointer;}
-.btn:hover{opacity:.9;}
-.btn.secondary{background:var(--card);border:1px solid var(--border);color:var(--text);}
+.btn{background:var(--btn-grad);color:var(--primary-text);border:none;border-radius:8px;padding:11px 20px;font-size:17px;font-weight:600;cursor:pointer;transition:transform .12s ease,filter .15s ease,box-shadow .18s ease;}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px) scale(1.04);box-shadow:0 6px 18px rgba(0,0,0,.4);}
+.btn:active{transform:translateY(0) scale(.98);}
+.btn.secondary{background:var(--card);border:1px solid var(--border);color:var(--text);font-weight:500;}
+.btn.secondary:hover{border-color:var(--accent);color:var(--accent);filter:none;transform:translateY(-1px) scale(1.03);box-shadow:0 4px 14px rgba(0,0,0,.3);}
 .result-box{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:16px;line-height:1.6;}
 .result-box.ok{background:rgba(53,194,107,.12);border:1px solid var(--green);}
 .result-box.warn{background:rgba(240,160,32,.12);border:1px solid var(--amber);}
@@ -61,7 +98,8 @@ input:focus{border-color:var(--accent);}
 .tbl tr:last-child td{border-bottom:none;}
 .tbl .empty{color:var(--muted);text-align:center;padding:28px 0;}
 .pager{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:15px;color:var(--muted);}
-.pager button{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-size:15px;cursor:pointer;}
+.pager button{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-size:15px;cursor:pointer;transition:transform .12s ease,color .15s ease,border-color .15s ease;}
+.pager button:hover:not(:disabled){border-color:var(--accent);color:var(--accent);transform:scale(1.05);}
 .pager button:disabled{opacity:.4;cursor:not-allowed;}
 /* 参数页：按语义分组的表单布局 */
 .form-section{margin-bottom:26px;}
@@ -80,7 +118,7 @@ input:focus{border-color:var(--accent);}
 .form-actions #cfgResult{flex:1;min-width:0;}
 .form-actions .result-box{margin-top:0;}
 /* 状态总览详情区：按「授时服务 / 上游时间源」分卡，宽屏并列、窄屏堆叠 */
-.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:start;}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:stretch;}
 .detail-card h3{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
 .detail-card .tag{font-size:13px;font-weight:500;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;white-space:nowrap;}
 .detail-card .note{font-size:14px;color:var(--muted);line-height:1.6;margin:2px 0 6px;}
@@ -116,12 +154,21 @@ input:focus{border-color:var(--accent);}
     <div class="logo">
       <img class="logo-ico" id="brandIco" alt="Sntpserver" src="data:image/png;base64,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" />
       <span class="logo-name" id="brandName">Sntpserver</span>
+      <span class="logo-ver" id="brandVer"></span>
     </div>
     <div class="nav-item active" data-panel="status">状态总览</div>
     <div class="nav-item" data-panel="clients" id="navClients" style="display:none">用户列表</div>
     <div class="nav-item" data-panel="client" id="navClient">校时工具</div>
     <div class="nav-item" data-panel="settings">参数设置</div>
     <div class="nav-item" data-panel="logs">运行日志</div>
+    <div class="theme-switch">
+      <span class="theme-label">配色主题</span>
+      <div class="theme-opts">
+        <button type="button" class="theme-opt" data-theme="default">默认</button>
+        <button type="button" class="theme-opt" data-theme="orange">暖橙</button>
+        <button type="button" class="theme-opt" data-theme="navy">海军蓝</button>
+      </div>
+    </div>
   </div>
   <div class="main">
     <div class="topbar">
@@ -150,6 +197,10 @@ input:focus{border-color:var(--accent);}
           <button id="pagerPrev">上一页</button>
           <span id="pagerInfo">1 / 1</span>
           <button id="pagerNext">下一页</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="btnExportCsv" class="btn">导出 CSV</button>
+          <span class="hint" style="margin-left:8px">导出当前列表（含累计授时次数），Excel 直接打开不乱码。</span>
         </div>
         <div class="hint">同一 IP 的多次授时合并为一行、次数累加；列表按最近授时时间排序，每页 15 条，最多保留 50 个客户端。</div>
       </div>
@@ -246,6 +297,10 @@ input:focus{border-color:var(--accent);}
     <div class="panel" id="panel-logs">
       <div class="card">
         <h3>最近日志</h3>
+        <div class="row" style="margin-bottom:8px">
+          <button id="btnDownloadLog" class="btn">下载日志</button>
+          <span class="hint" style="margin-left:8px">导出为纯文本，便于发给他人排查。</span>
+        </div>
         <div class="logs" id="logsBox">加载中…</div>
       </div>
     </div>
@@ -255,6 +310,24 @@ input:focus{border-color:var(--accent);}
 (function(){
   var state={status:{},time:{},logs:[],config:{},clients:[],clientPage:1};
   function $(id){return document.getElementById(id);}
+  // 配色主题：默认 / 暖橙+深灰 / 海军蓝+渐变，选择记到 localStorage，下次打开沿用。
+  var THEME_KEY='ntp_web_theme';
+  function applyTheme(t){
+    t=t||'default';
+    if(t==='default'){ document.documentElement.removeAttribute('data-theme'); }
+    else { document.documentElement.setAttribute('data-theme',t); }
+    document.querySelectorAll('.theme-opt').forEach(function(b){
+      b.classList.toggle('active', b.getAttribute('data-theme')===t);
+    });
+  }
+  try{ applyTheme(localStorage.getItem(THEME_KEY)||'default'); }catch(e){}
+  document.querySelectorAll('.theme-opt').forEach(function(b){
+    b.addEventListener('click',function(){
+      var t=b.getAttribute('data-theme');
+      applyTheme(t);
+      try{ localStorage.setItem(THEME_KEY,t); }catch(e){}
+    });
+  });
   function api(path,opts){
     return fetch(path,opts).then(function(r){
       return r.json().catch(function(){return {};}).then(function(j){
@@ -264,7 +337,12 @@ input:focus{border-color:var(--accent);}
     });
   }
   function setPanel(name){
-    document.querySelectorAll('.nav-item').forEach(function(el){
+    var _ec=document.getElementById('btnExportCsv');
+  if(_ec)_ec.addEventListener('click',function(){location.href='/api/clients?format=csv';});
+  var _dl=document.getElementById('btnDownloadLog');
+  if(_dl)_dl.addEventListener('click',function(){location.href='/api/logs?format=txt';});
+
+  document.querySelectorAll('.nav-item').forEach(function(el){
       el.classList.toggle('active',el.getAttribute('data-panel')===name);
     });
     document.querySelectorAll('.panel').forEach(function(el){
@@ -279,6 +357,8 @@ input:focus{border-color:var(--accent);}
       var isServer=(mode==='server');
       // 品牌名随角色切换：同一份页面服务端/客户端共用，标题不能写死。
       $('brandName').textContent=isServer?'Sntpserver':'SntpClient';
+      // 版本号由后端注入（-ldflags -X main.version），未注入时后端返回「开发版」。
+      $('brandVer').textContent=s.version||'';
       document.title=isServer?'Sntpserver':'SntpClient';
       $('navClients').style.display=isServer?'':'none';
       $('navClient').style.display=isServer?'none':'';
@@ -382,7 +462,8 @@ input:focus{border-color:var(--accent);}
         {k:'监听地址',v:addr,big:true},
         reach.length?{k:'可访问地址',chips:reach}:{k:'可访问地址',v:'—'},
         {k:'运行时长',v:s.uptime||'—'},
-        {k:'最近客户端',v:s.last_peer||'—'}
+        {k:'最近客户端',v:s.last_peer||'—'},
+        {k:'程序版本',v:s.version||'—'}
       ];
 
       var us=s.upstream_status;
@@ -426,7 +507,8 @@ input:focus{border-color:var(--accent);}
           {k:'服务端地址',v:s.client_server||'—',big:true},
           {k:'校时间隔',v:s.interval||'—'},
           {k:'校时阈值',v:s.step||'—'},
-          {k:'运行环境',v:plat+(s.elevated?' · 已提权':' · 未提权')}
+          {k:'运行环境',v:plat+(s.elevated?' · 已提权':' · 未提权')},
+          {k:'程序版本',v:s.version||'—'}
         ]},
         {title:'最近校时',rows:[
           {k:'时钟偏差',v:s.last_offset||'—'},

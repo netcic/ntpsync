@@ -36,6 +36,19 @@ import (
 	"ntpsync/internal/web"
 )
 
+// version 为本程序的版本号，构建时由 build.sh 用
+// -ldflags "-X main.version=<VERSION 文件内容>" 注入。
+// 保持默认值 dev：go run 或手工 go build 时界面显示「开发版」。
+var version = "dev"
+
+// displayVersion 供日志与界面复用：未注入版本时显示「开发版」。
+func displayVersion() string {
+	if version == "" || version == "dev" {
+		return "开发版"
+	}
+	return "v" + strings.TrimPrefix(version, "v")
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags)
 
@@ -365,6 +378,8 @@ func (s *daemonSettings) applyFromWeb(cfg *web.Config, h *web.Handler) error {
 // runDaemon 常驻后台周期校时。ctx 取消（收到停止信号 / 服务停止请求）时优雅退出。
 // webAddr 非空时启动本地 Web 管理界面，并把校时状态同步给界面。
 func runDaemon(ctx context.Context, server string, interval time.Duration, step time.Duration, webAddr string) {
+	// 允许只写端口（-web 8080），统一补全成 127.0.0.1:8080。
+	webAddr = web.NormalizeListenAddr(webAddr)
 	st := &daemonSettings{cur: clientSettings{Server: server, Interval: interval, Step: step}}
 	cur := st.get()
 	log.Printf("后台校时启动：服务端=%s 间隔=%s 校时阈值=%s",
@@ -383,6 +398,8 @@ func runDaemon(ctx context.Context, server string, interval time.Duration, step 
 			Interval:   duration.Format(cur.Interval),
 			Step:       duration.Format(cur.Step),
 		})
+		h.Version = version
+		h.Logf("校时客户端已启动 版本=%s 服务端=%s", displayVersion(), cur.Server)
 		// 保存配置要做三件事，缺一不可：
 		//   ① 改运行参数——只改内存不改循环，保存等于没生效；
 		//   ② 推一次状态——否则状态总览要等下一次校时才变（本次修复的症状）；
@@ -548,6 +565,12 @@ func installClientService(server string, interval, step time.Duration, webAddr s
 	if manual {
 		startType = "manual"
 	}
+	// 从 v1.0.x 升级：清掉旧服务 ntpsync，避免与新服务并存。
+	if removed, err := pal.CleanupLegacyService(p, pal.LegacyClientServiceName); err != nil {
+		log.Printf("清理旧版服务 %s 失败（不影响本次安装）：%v", pal.LegacyClientServiceName, err)
+	} else if removed {
+		log.Printf("已清理旧版服务 %s（v1.0.x 遗留）", pal.LegacyClientServiceName)
+	}
 
 	// 校时目标/间隔/阈值写进配置文件，而不是固化在服务启动参数里。
 	// 否则 Web 参数页改完、服务一重启就被启动参数覆盖回去——「保存成功」
@@ -577,7 +600,7 @@ func installClientService(server string, interval, step time.Duration, webAddr s
 	}
 	cfg := pal.ServiceConfig{
 		Name:        pal.ClientServiceName,
-		DisplayName: "SntpClient",
+		DisplayName: pal.ClientServiceName,
 		Description: "开机自启，周期性向局域网 NTP 服务端校准本机时钟",
 		BinPath:     exe,
 		Args:        args,
