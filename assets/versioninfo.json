@@ -2,14 +2,14 @@
   "FixedFileInfo": {
     "FileVersion": {
       "Major": 1,
-      "Minor": 10,
-      "Patch": 28,
+      "Minor": 11,
+      "Patch": 9,
       "Build": 0
     },
     "ProductVersion": {
       "Major": 1,
-      "Minor": 10,
-      "Patch": 28,
+      "Minor": 11,
+      "Patch": 9,
       "Build": 0
     },
     "FileFlagsMask": "3f",
@@ -22,12 +22,12 @@
     "Comments": "无外网局域网 NTP 授时系统",
     "CompanyName": "局域网 NTP 授时系统",
     "FileDescription": "局域网 NTP 授时系统",
-    "FileVersion": "1.10.28",
+    "FileVersion": "1.11.9",
     "InternalName": "ntpsync",
     "LegalCopyright": "",
     "OriginalFilename": "",
     "ProductName": "局域网 NTP 授时系统",
-    "ProductVersion": "1.10.28"
+    "ProductVersion": "1.11.9"
   },
   "VarFileInfo": {
     "Translation": {

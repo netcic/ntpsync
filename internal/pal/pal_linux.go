@@ -20,6 +20,13 @@ import (
 // 避免客户端命令误操作服务端的 ntpsyncd。
 type linuxPlatform struct{}
 
+// serviceNamesCaseSensitive 报告「服务名是否区分大小写」。
+//
+// systemd 的 unit 文件名（/etc/systemd/system/<name>.service）区分大小写，
+// SysV 的 /etc/init.d/<name> 也一样。所以 Sntpserver.service 与 SntpServer.service
+// 是两条独立的服务，老 unit 不清掉就会继续开机自启、抢走 UDP 123。
+const serviceNamesCaseSensitive = true
+
 // NewPlatform 返回当前平台实现（每个平台文件各自定义，编译时仅其一生效）。
 func NewPlatform() Platform { return &linuxPlatform{} }
 
@@ -287,26 +294,71 @@ func (p *linuxPlatform) ServiceStatus(name string) (string, error) {
 // ConfigureFirewall 放行指定 UDP 端口入站（服务端授时）。
 // 优先 firewalld，其次 ufw；均不可用时返回 ErrUnsupported。
 func (p *linuxPlatform) ConfigureFirewall(udpPort int) error {
+	return p.allowPort("udp", udpPort)
+}
+
+// ConfigureFirewallTCP 放行指定 TCP 端口入站（Web 管理界面）。
+func (p *linuxPlatform) ConfigureFirewallTCP(webPort int) error {
+	return p.allowPort("tcp", webPort)
+}
+
+// allowPort 用 firewalld 或 ufw 放行一个入站端口；两者都没有时返回 ErrUnsupported。
+// proto 取 "udp"/"tcp"，只影响端口写法与提示文案——授时走 UDP，Web 走 TCP。
+func (p *linuxPlatform) allowPort(proto string, port int) error {
 	if !p.IsElevated() {
 		return ErrNotElevated
 	}
-	port := fmt.Sprintf("%d/udp", udpPort)
+	spec := fmt.Sprintf("%d/%s", port, proto)
 	_, fwErr := exec.LookPath("firewall-cmd")
 	_, ufwErr := exec.LookPath("ufw")
 	switch {
 	case fwErr == nil:
-		if out, err := exec.Command("firewall-cmd", "--permanent", "--add-port", port).CombinedOutput(); err != nil {
-			return fmt.Errorf("pal: firewall-cmd 放行失败: %v: %s", err, string(out))
+		if out, err := exec.Command("firewall-cmd", "--permanent", "--add-port", spec).CombinedOutput(); err != nil {
+			return fmt.Errorf("pal: firewall-cmd 放行 %s 失败: %v: %s", spec, err, string(out))
 		}
 		run("firewall-cmd", "--reload")
 		return nil
 	case ufwErr == nil:
-		if out, err := exec.Command("ufw", "allow", port).CombinedOutput(); err != nil {
-			return fmt.Errorf("pal: ufw 放行失败: %v: %s", err, string(out))
+		if out, err := exec.Command("ufw", "allow", spec).CombinedOutput(); err != nil {
+			return fmt.Errorf("pal: ufw 放行 %s 失败: %v: %s", spec, err, string(out))
 		}
 		return nil
 	default:
-		return fmt.Errorf("%w: 未找到 firewall-cmd/ufw，请手动放行 UDP %d", ErrUnsupported, udpPort)
+		return fmt.Errorf("%w: 未找到 firewall-cmd/ufw，请手动放行 %s", ErrUnsupported, spec)
+	}
+}
+
+// RemoveFirewall 撤销指定 UDP 端口的入站放行（卸载时用）。
+// 与 ConfigureFirewall 成对：只撤销本程序放行过的那几个端口。
+func (p *linuxPlatform) RemoveFirewall(udpPort int) error {
+	return p.denyPort("udp", udpPort)
+}
+
+// RemoveFirewallTCP 撤销指定 TCP 端口的入站放行（Web 管理界面）。
+func (p *linuxPlatform) RemoveFirewallTCP(tcpPort int) error {
+	return p.denyPort("tcp", tcpPort)
+}
+
+// denyPort 用 firewalld 或 ufw 撤销一个入站端口的放行；两者都没有时返回 ErrUnsupported。
+// 端口本来就没放行不算错误：firewall-cmd --remove-port 与 ufw delete 都会返回非 0，
+// 这里一律忽略——卸载要的是「结果不存在」，不是「命令成功」。
+func (p *linuxPlatform) denyPort(proto string, port int) error {
+	if !p.IsElevated() {
+		return ErrNotElevated
+	}
+	spec := fmt.Sprintf("%d/%s", port, proto)
+	_, fwErr := exec.LookPath("firewall-cmd")
+	_, ufwErr := exec.LookPath("ufw")
+	switch {
+	case fwErr == nil:
+		run("firewall-cmd", "--permanent", "--remove-port", spec)
+		run("firewall-cmd", "--reload")
+		return nil
+	case ufwErr == nil:
+		run("ufw", "delete", "allow", spec)
+		return nil
+	default:
+		return fmt.Errorf("%w: 未找到 firewall-cmd/ufw，请手动撤销 %s", ErrUnsupported, spec)
 	}
 }
 

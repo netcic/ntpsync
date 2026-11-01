@@ -71,7 +71,7 @@ func TestServiceManagementSafe(t *testing.T) {
 		Name:        "ntpsyncd_test",
 		DisplayName: "NTP Sync Test",
 		Description: "测试用 NTP 授时服务",
-		BinPath:     "/usr/local/bin/Sntpserver",
+		BinPath:     "/usr/local/bin/SntpServer",
 		Args:        []string{"--server", "127.0.0.1"},
 		StartType:   "manual",
 	}
@@ -97,8 +97,8 @@ func TestServiceManagementSafe(t *testing.T) {
 // 这是「客户端卸载把服务端服务一起删掉」那个 bug 的根因护栏：
 // 只要两个名字不相等，任何一方的命令都不可能删掉对方的服务。
 func TestServiceNames(t *testing.T) {
-	if DefaultServiceName != "Sntpserver" {
-		t.Errorf("服务端服务名应为 Sntpserver，实际 %q", DefaultServiceName)
+	if DefaultServiceName != "SntpServer" {
+		t.Errorf("服务端服务名应为 SntpServer，实际 %q", DefaultServiceName)
 	}
 	if ClientServiceName != "SntpClient" {
 		t.Errorf("客户端服务名应为 SntpClient，实际 %q", ClientServiceName)
@@ -145,6 +145,33 @@ func TestLegacyServiceNamesDifferFromCurrent(t *testing.T) {
 	if LegacyServerServiceName == ClientServiceName || LegacyClientServiceName == DefaultServiceName {
 		t.Fatalf("新旧服务名发生交叉：server=%s/%s client=%s/%s",
 			LegacyServerServiceName, DefaultServiceName, LegacyClientServiceName, ClientServiceName)
+	}
+}
+
+// TestCleanupLegacyServicesCaseFold 守住「改名（仅大小写）后升级」的两种平台差异：
+// 服务名不区分大小写的系统（Windows）必须跳过旧名，删了等于删刚装的新服务；
+// 区分大小写的系统（Linux 的 unit 文件名）必须清掉，否则老 unit 继续抢 UDP 123。
+func TestCleanupLegacyServicesCaseFold(t *testing.T) {
+	st := &stubPlatform{}
+	removed, err := CleanupLegacyServices(st, LegacyServerServiceNames, DefaultServiceName)
+	if err != nil {
+		t.Fatalf("清理不应报错: %v", err)
+	}
+
+	// 「ntpsyncd」在任何平台都该被清掉。
+	if len(removed) == 0 || removed[0] != LegacyServerServiceName {
+		t.Fatalf("应至少清掉 %s，实际 %v", LegacyServerServiceName, removed)
+	}
+
+	cleanedOldName := false
+	for _, n := range st.calls {
+		if n == LegacyServerServiceNameV1 {
+			cleanedOldName = true
+		}
+	}
+	if cleanedOldName != serviceNamesCaseSensitive {
+		t.Fatalf("平台服务名区分大小写=%v，但清理旧名 %s 的结果是 %v（实际调用 %v）",
+			serviceNamesCaseSensitive, LegacyServerServiceNameV1, cleanedOldName, st.calls)
 	}
 }
 

@@ -6,7 +6,7 @@
 #   bash scripts/build.sh 1.10.29    # 指定版本号（覆盖 VERSION 文件）
 #
 # 产出（dist/，文件名一律带版本号）：
-#   Sntpserver-v<ver>-<os>-<arch>[.exe]   服务端（含内嵌 Web UI）
+#   SntpServer-v<ver>-<os>-<arch>[.exe]   服务端（含内嵌 Web UI）
 #   SntpClient-v<ver>-<os>-<arch>[.exe]   客户端
 #
 # 为什么只产出带版本号的文件：同一个目录里既放带版本号又不带版本号的副本时，
@@ -62,7 +62,7 @@ echo "=== 版本 $VERSION ==="
 # 目录名沿用 ntpsyncd / ntpsync：Go 包路径与内部标识不随商品名变，改的只是交付物。
 publish_name() {
   case "$1" in
-    server) echo "Sntpserver" ;;
+    server) echo "SntpServer" ;;
     client) echo "SntpClient" ;;
   esac
 }

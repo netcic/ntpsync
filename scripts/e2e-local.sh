@@ -14,7 +14,7 @@
 #   D 服务段：调用 status 子命令，验证两端各自只引用自己的服务名（回归「客户端卸载
 #     把服务端服务删掉」）。注册/卸载服务需要管理员 + sc.exe，缺失时标 SKIP。
 #
-# 用法: bash scripts/e2e-local.sh [版本号，默认 1.10.28]
+# 用法: bash scripts/e2e-local.sh [版本号，默认取 VERSION]
 # 退出码: 有 FAIL 返回 1；只有 SKIP 返回 0（并在末尾列出待人工复验项）。
 
 set -uo pipefail
@@ -79,9 +79,9 @@ for ln in lines:
 open(dst, 'w', encoding='utf-8-sig').write('\n'.join(buf) + '\n')
 PY
 
-  for role in Sntpserver SntpClient; do
+  for role in SntpServer SntpClient; do
     arch="amd64"
-    if [ "$role" = "Sntpserver" ]; then defs="-DROLE=server"; else defs="-DROLE=client"; fi
+    if [ "$role" = "SntpServer" ]; then defs="-DROLE=server"; else defs="-DROLE=client"; fi
     out=""
     if makensis $defs -DARCH="$arch" -DVERSION="$VERSION" "$probe_nsi" > "$WORK/makensis-$role.log" 2>&1; then
       out="$(ls "$WORK"/probe-${role}-${arch}.exe 2>/dev/null | head -1)"
@@ -91,7 +91,7 @@ PY
       continue
     fi
     other="SntpClient"; legacy="ntpsyncd"
-    [ "$role" = "SntpClient" ] && { other="Sntpserver"; legacy="ntpsync"; }
+    [ "$role" = "SntpClient" ] && { other="SntpServer"; legacy="ntpsync"; }
 
     # NSIS 字符串是 UTF-16LE，一次算完所有命中，避免反复起 python
     res="$(python - "$out" "$role" "$other" "$legacy" <<'PY'
@@ -117,33 +117,35 @@ fi
 # ---------------------------------------------------------------------------
 section "B. 安装布局重放"
 ROOT="$WORK/pf"
-mkdir -p "$ROOT/Sntpserver" "$ROOT/SntpClient" "$ROOT/startmenu"
-cp "dist/Sntpserver-v${VERSION}-windows-amd64.exe" "$ROOT/Sntpserver/Sntpserver.exe" 2>/dev/null
+mkdir -p "$ROOT/SntpServer" "$ROOT/SntpClient" "$ROOT/startmenu"
+cp "dist/SntpServer-v${VERSION}-windows-amd64.exe" "$ROOT/SntpServer/SntpServer.exe" 2>/dev/null
 cp "dist/SntpClient-v${VERSION}-windows-amd64.exe" "$ROOT/SntpClient/SntpClient.exe" 2>/dev/null
-cp assets/icon.ico "$ROOT/Sntpserver/Sntpserver.ico" 2>/dev/null
-cp assets/icon.ico "$ROOT/SntpClient/SntpClient.ico" 2>/dev/null
+cp assets/app.ico "$ROOT/SntpServer/SntpServer.ico" 2>/dev/null
+cp assets/app.ico "$ROOT/SntpClient/SntpClient.ico" 2>/dev/null
 
 # 开始菜单快捷方式：与 nsi 中 WriteINIStr 写出的内容保持一致——以产品名命名、直接落在
 # 开始菜单根目录（不再套一层产品子文件夹），卸载不再单独放「卸载」快捷方式。
-for role in Sntpserver SntpClient; do
+for role in SntpServer SntpClient; do
+  # Web 端口与 nsi 的 DEFAULT_WEB 对齐：服务端 8080、客户端 8090
+  if [ "$role" = "SntpServer" ]; then web=8080; else web=8090; fi
   cat > "$ROOT/startmenu/$role.url" <<EOF
 [InternetShortcut]
-URL=http://127.0.0.1:8080
+URL=http://127.0.0.1:$web
 IconFile=$ROOT\\$role\\$role.exe
 IconIndex=0
 EOF
 done
 
-chk "布局: 两产品安装目录分离"           "$([ -d "$ROOT/Sntpserver" ] && [ -d "$ROOT/SntpClient" ] && echo 1 || echo 0)"
-chk "布局: 服务端主程序名 Sntpserver.exe" "$([ -f "$ROOT/Sntpserver/Sntpserver.exe" ] && echo 1 || echo 0)"
+chk "布局: 两产品安装目录分离"           "$([ -d "$ROOT/SntpServer" ] && [ -d "$ROOT/SntpClient" ] && echo 1 || echo 0)"
+chk "布局: 服务端主程序名 SntpServer.exe" "$([ -f "$ROOT/SntpServer/SntpServer.exe" ] && echo 1 || echo 0)"
 chk "布局: 客户端主程序名 SntpClient.exe" "$([ -f "$ROOT/SntpClient/SntpClient.exe" ] && echo 1 || echo 0)"
-chk "布局: 不新建产品子文件夹"            "$([ -e "$ROOT/startmenu/Sntpserver" ] && echo 0 || echo 1)"
-chk "布局: .url 落在开始菜单根目录"       "$([ -f "$ROOT/startmenu/Sntpserver.url" ] && echo 1 || echo 0)"
-chk "布局: .url 以产品名命名"             "$([ -f "$ROOT/startmenu/Sntpserver.url" ] && [ -f "$ROOT/startmenu/SntpClient.url" ] && echo 1 || echo 0)"
-chk "布局: .url 图标指向自身 exe"         "$(grep -q 'IconFile=.*Sntpserver.exe' "$ROOT/startmenu/Sntpserver.url" && echo 1 || echo 0)"
+chk "布局: 不新建产品子文件夹"            "$([ -e "$ROOT/startmenu/SntpServer" ] && echo 0 || echo 1)"
+chk "布局: .url 落在开始菜单根目录"       "$([ -f "$ROOT/startmenu/SntpServer.url" ] && echo 1 || echo 0)"
+chk "布局: .url 以产品名命名"             "$([ -f "$ROOT/startmenu/SntpServer.url" ] && [ -f "$ROOT/startmenu/SntpClient.url" ] && echo 1 || echo 0)"
+chk "布局: .url 图标指向自身 exe"         "$(grep -q 'IconFile=.*SntpServer.exe' "$ROOT/startmenu/SntpServer.url" && echo 1 || echo 0)"
 chk "布局: 客户端 .url 图标指向自身 exe"  "$(grep -q 'IconFile=.*SntpClient.exe' "$ROOT/startmenu/SntpClient.url" && echo 1 || echo 0)"
-chk "布局: 无「卸载」快捷方式"            "$([ -e "$ROOT/startmenu/Sntpserver/卸载 Sntpserver.lnk" ] && echo 0 || echo 1)"
-chk "布局: 客户端目录不含服务端程序"      "$([ -f "$ROOT/SntpClient/Sntpserver.exe" ] && echo 0 || echo 1)"
+chk "布局: 无「卸载」快捷方式"            "$([ -e "$ROOT/startmenu/SntpServer/卸载 SntpServer.lnk" ] && echo 0 || echo 1)"
+chk "布局: 客户端目录不含服务端程序"      "$([ -f "$ROOT/SntpClient/SntpServer.exe" ] && echo 0 || echo 1)"
 
 # ---------------------------------------------------------------------------
 # C. 冒烟段：真跑服务端 + 客户端
@@ -152,7 +154,7 @@ section "C. 端到端冒烟（非特权端口）"
 SRV_PORT=$((20000 + RANDOM % 20000))
 WEB_PORT=$((SRV_PORT + 1))
 CLIENT_WEB=$((SRV_PORT + 2))
-SRV_EXE="$ROOT/Sntpserver/Sntpserver.exe"
+SRV_EXE="$ROOT/SntpServer/SntpServer.exe"
 CLI_EXE="$ROOT/SntpClient/SntpClient.exe"
 
 if [ ! -f "$SRV_EXE" ] || [ ! -f "$CLI_EXE" ]; then
@@ -210,13 +212,13 @@ fi
 section "D. 服务名隔离（status 子命令实跑）"
 if [ -f "$SRV_EXE" ]; then
   out="$("$SRV_EXE" status 2>&1 || true)"
-  chk "服务端 status 引用 Sntpserver"      "$(echo "$out" | grep -q 'Sntpserver' && echo 1 || echo 0)"
+  chk "服务端 status 引用 SntpServer"      "$(echo "$out" | grep -q 'SntpServer' && echo 1 || echo 0)"
   chk "服务端 status 不含 SntpClient"      "$(echo "$out" | grep -q 'SntpClient' && echo 0 || echo 1)"
 fi
 if [ -f "$CLI_EXE" ]; then
   out="$("$CLI_EXE" status 2>&1 || true)"
   chk "客户端 status 引用 SntpClient"      "$(echo "$out" | grep -q 'SntpClient' && echo 1 || echo 0)"
-  chk "客户端 status 不含 Sntpserver"      "$(echo "$out" | grep -q 'Sntpserver' && echo 0 || echo 1)"
+  chk "客户端 status 不含 SntpServer"      "$(echo "$out" | grep -q 'SntpServer' && echo 0 || echo 1)"
 fi
 skip "注册/卸载/启动系统服务需管理员与 sc.exe，本机无法执行（见 TESTING.md）"
 

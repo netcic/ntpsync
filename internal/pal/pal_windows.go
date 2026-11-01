@@ -19,6 +19,13 @@ import (
 // 于是新进程里执行 `ntpsync uninstall` 会把服务端的 ntpsyncd 删掉。
 type winPlatform struct{}
 
+// serviceNamesCaseSensitive 报告「服务名是否区分大小写」。
+//
+// Windows 的 SCM 按不区分大小写匹配：Sntpserver 与 SntpServer 是同一条服务。
+// 因此改名（仅大小写不同）在 Windows 上不需要、也不能做「删旧名再建新名」——
+// 删旧名等于删刚装好的那条。
+const serviceNamesCaseSensitive = false
+
 // NewPlatform 返回当前平台实现（每个平台文件各自定义，编译时仅其一生效）。
 func NewPlatform() Platform { return &winPlatform{} }
 
@@ -234,7 +241,7 @@ func (p *winPlatform) ConfigureFirewall(udpPort int) error {
 	if !p.IsElevated() {
 		return ErrNotElevated
 	}
-	rule := fmt.Sprintf("NTP 授时服务 (UDP %d)", udpPort)
+	rule := fmt.Sprintf(FirewallRuleUDP, udpPort)
 	// 先删同名旧规则（避免重复），失败忽略；再添加。
 	_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
 		"name="+rule).Run()
@@ -243,6 +250,57 @@ func (p *winPlatform) ConfigureFirewall(udpPort int) error {
 		fmt.Sprintf("localport=%d", udpPort)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("pal: netsh 放行端口失败: %v: %s", err, string(out))
+	}
+	return nil
+}
+
+// ConfigureFirewallTCP 通过 netsh 放行指定 TCP 端口入站（Web 管理界面）。
+func (p *winPlatform) ConfigureFirewallTCP(webPort int) error {
+	if !p.IsElevated() {
+		return ErrNotElevated
+	}
+	rule := fmt.Sprintf(FirewallRuleWeb, webPort)
+	_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
+		"name="+rule).Run()
+	out, err := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name="+rule, "dir=in", "action=allow", "protocol=TCP",
+		fmt.Sprintf("localport=%d", webPort)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pal: netsh 放行 TCP 端口失败: %v: %s", err, string(out))
+	}
+	return nil
+}
+
+// RemoveFirewall 撤销本程序为 UDP 端口建过的入站放行规则。
+//
+// 规则名与 ConfigureFirewall 一致；1.10.x 用的是「NTP 授时 <端口>」，一并清掉。
+// netsh 删不存在的规则会返回非 0，这里刻意忽略：重复卸载是正常操作。
+func (p *winPlatform) RemoveFirewall(udpPort int) error {
+	if !p.IsElevated() {
+		return ErrNotElevated
+	}
+	for _, name := range []string{
+		fmt.Sprintf(FirewallRuleUDP, udpPort),
+		fmt.Sprintf(FirewallRuleUDPv1, udpPort),
+	} {
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
+			"name="+name).Run()
+	}
+	return nil
+}
+
+// RemoveFirewallTCP 撤销本程序为 TCP 端口（Web 管理界面）建过的入站放行规则。
+// 「NTP Web 管理 <端口>」是 1.11.x 早先的命名，留着会变成一条指向已卸载程序的空放行。
+func (p *winPlatform) RemoveFirewallTCP(webPort int) error {
+	if !p.IsElevated() {
+		return ErrNotElevated
+	}
+	for _, name := range []string{
+		fmt.Sprintf(FirewallRuleWeb, webPort),
+		fmt.Sprintf(FirewallRuleWebLegacy, webPort),
+	} {
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
+			"name="+name).Run()
 	}
 	return nil
 }

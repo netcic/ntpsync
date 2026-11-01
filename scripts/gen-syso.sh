@@ -56,7 +56,7 @@ gen() { # 参数: $1=cmd 目录  $2=产品名  $3=描述
   echo "已生成 cmd/$dir/resource_windows_*.syso ($prod $VERSION)"
 }
 
-gen ntpsyncd Sntpserver "局域网 NTP 授时系统 - 服务端"
+gen ntpsyncd SntpServer "局域网 NTP 授时系统 - 服务端"
 gen ntpsync  SntpClient "局域网 NTP 授时系统 - 客户端"
 
 echo ""

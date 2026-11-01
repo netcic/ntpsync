@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -127,28 +128,28 @@ func TestMergeSavedClient(t *testing.T) {
 	}
 
 	t.Run("全部取配置文件", func(t *testing.T) {
-		s, iv, sp := mergeSavedClient(map[string]bool{}, "", 15*time.Minute, 5*time.Second)
-		if s != "10.0.0.9:123" || iv != 30*time.Minute || sp != 10*time.Second {
-			t.Errorf("应全部采用配置文件，实际 %s %v %v", s, iv, sp)
+		m := mergeSavedClient(map[string]bool{}, "", 15*time.Minute, 5*time.Second)
+		if m.Server != "10.0.0.9:123" || m.Interval != 30*time.Minute || m.Step != 10*time.Second {
+			t.Errorf("应全部采用配置文件，实际 %+v", m)
 		}
 	})
 
 	t.Run("命令行显式参数优先", func(t *testing.T) {
-		s, iv, sp := mergeSavedClient(map[string]bool{"s": true, "interval": true, "step": true},
+		m := mergeSavedClient(map[string]bool{"s": true, "interval": true, "step": true},
 			"192.168.1.10:123", time.Minute, 2*time.Second)
-		if s != "192.168.1.10:123" || iv != time.Minute || sp != 2*time.Second {
-			t.Errorf("显式参数应优先，实际 %s %v %v", s, iv, sp)
+		if m.Server != "192.168.1.10:123" || m.Interval != time.Minute || m.Step != 2*time.Second {
+			t.Errorf("显式参数应优先，实际 %+v", m)
 		}
 	})
 
 	t.Run("混合：只显式给地址", func(t *testing.T) {
-		s, iv, sp := mergeSavedClient(map[string]bool{"s": true},
+		m := mergeSavedClient(map[string]bool{"s": true},
 			"192.168.1.10:123", 15*time.Minute, 5*time.Second)
-		if s != "192.168.1.10:123" {
-			t.Errorf("地址应取命令行，实际 %s", s)
+		if m.Server != "192.168.1.10:123" {
+			t.Errorf("地址应取命令行，实际 %s", m.Server)
 		}
-		if iv != 30*time.Minute || sp != 10*time.Second {
-			t.Errorf("间隔/阈值应取配置文件，实际 %v %v", iv, sp)
+		if m.Interval != 30*time.Minute || m.Step != 10*time.Second {
+			t.Errorf("间隔/阈值应取配置文件，实际 %v %v", m.Interval, m.Step)
 		}
 	})
 }
@@ -156,9 +157,9 @@ func TestMergeSavedClient(t *testing.T) {
 // TestMergeSavedClient_NoFile 没有配置文件时按命令行参数跑。
 func TestMergeSavedClient_NoFile(t *testing.T) {
 	tempClientConfig(t) // 只改路径，不写文件
-	s, iv, sp := mergeSavedClient(map[string]bool{}, "127.0.0.1:123", 15*time.Minute, 5*time.Second)
-	if s != "127.0.0.1:123" || iv != 15*time.Minute || sp != 5*time.Second {
-		t.Errorf("无文件应原样返回，实际 %s %v %v", s, iv, sp)
+	m := mergeSavedClient(map[string]bool{}, "127.0.0.1:123", 15*time.Minute, 5*time.Second)
+	if m.Server != "127.0.0.1:123" || m.Interval != 15*time.Minute || m.Step != 5*time.Second {
+		t.Errorf("无文件应原样返回，实际 %+v", m)
 	}
 }
 
@@ -205,11 +206,50 @@ func TestPlanClientInstall_PartialOld(t *testing.T) {
 	}
 }
 
+// TestPlanClientInstall_FillMissingWeb 覆盖升级时旧配置里没有 web 字段。
+// 1.0.x / 1.10.x 装出来的配置就是这样：不把本次的 -web 补进去，升级后守护
+// 进程拿不到 Web 地址、界面根本不启动，而 1.11.4 起页面里已没有改端口的地方。
+func TestPlanClientInstall_FillMissingWeb(t *testing.T) {
+	want := config.ClientConfig{Server: "127.0.0.1:123", Interval: "15分钟", Step: "5秒", Web: "0.0.0.0:8090"}
+	old := &config.ClientConfig{Server: "10.0.0.9:123"}
+
+	got := planClientInstall(want, true, true, old, nil)
+	if !got.Keep {
+		t.Fatal("旧配置可读时应保留业务参数")
+	}
+	if got.Eff.Web != "0.0.0.0:8090" {
+		t.Errorf("旧配置缺 web 时应采用本次参数，实际 %q", got.Eff.Web)
+	}
+	if got.Save == nil {
+		t.Fatal("缺 web 时必须补写配置，否则服务重启后 Web 界面不启动")
+	}
+	if got.Save.Web != "0.0.0.0:8090" || got.Save.Server != "10.0.0.9:123" {
+		t.Errorf("补写只该动 web、其余保持原值，实际 %+v", *got.Save)
+	}
+
+	// 旧配置已有 web：沿用旧端口，且不写盘（用户的端口不被安装参数顶回去）。
+	old2 := &config.ClientConfig{Server: "10.0.0.9:123", Web: "0.0.0.0:9999"}
+	got2 := planClientInstall(want, true, true, old2, nil)
+	if got2.Eff.Web != "0.0.0.0:9999" {
+		t.Errorf("旧配置有 web 时应沿用，实际 %q", got2.Eff.Web)
+	}
+	if got2.Save != nil {
+		t.Errorf("无需补写时不该落盘，实际 %+v", *got2.Save)
+	}
+
+	// 全新安装：写完整配置。
+	if p := planClientInstall(want, true, false, nil, nil); p.Save == nil || p.Save.Web != "0.0.0.0:8090" {
+		t.Errorf("全新安装应写入完整配置，实际 %+v", p.Save)
+	}
+}
+
 // fakeServicePlatform 只关心「卸载了哪个服务」，其余方法由 nil 嵌入兜底。
 // 卸载路径要提权、会真改系统，所以把服务名决策抽成纯函数单独测。
 type fakeServicePlatform struct {
 	pal.Platform
 	uninstalled []string
+	udpPorts    []int
+	tcpPorts    []int
 	err         error
 }
 
@@ -218,8 +258,18 @@ func (f *fakeServicePlatform) UninstallService(name string) error {
 	return f.err
 }
 
+func (f *fakeServicePlatform) RemoveFirewall(port int) error {
+	f.udpPorts = append(f.udpPorts, port)
+	return nil
+}
+
+func (f *fakeServicePlatform) RemoveFirewallTCP(port int) error {
+	f.tcpPorts = append(f.tcpPorts, port)
+	return nil
+}
+
 // TestRemoveClientServiceUsesClientName 是本轮 bug 的回归护栏：
-// 客户端卸载只能操作 SntpClient，绝不能碰服务端的 Sntpserver。
+// 客户端卸载只能操作 SntpClient，绝不能碰服务端的 SntpServer。
 func TestRemoveClientServiceUsesClientName(t *testing.T) {
 	fp := &fakeServicePlatform{}
 	removed, err := removeClientService(fp)
@@ -312,5 +362,63 @@ func TestPortableServerFallback(t *testing.T) {
 	// 都没有：默认值。
 	if got := portableServer(t.TempDir()); got != "127.0.0.1:123" {
 		t.Errorf("无文件时应返回默认地址，实际 %q", got)
+	}
+}
+
+// TestUninstallClientKeepsConfigWhenServiceRemovalFails 服务没卸掉时不能删配置。
+// 与服务端同一理由：产品还在，删配置会让它下次启动退回默认参数。
+func TestUninstallClientKeepsConfigWhenServiceRemovalFails(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "ntpsync.json")
+	if err := config.SaveClient(cfgPath, &config.ClientConfig{Server: "127.0.0.1:123", Web: "0.0.0.0:8190"}); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+
+	fp := &fakeServicePlatform{err: errors.New("拒绝访问")}
+	if err := uninstallClient(fp, cfgPath, false); err == nil {
+		t.Fatal("服务卸载失败时必须返回错误")
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Errorf("服务未卸载，配置应保留: %v", err)
+	}
+	if len(fp.tcpPorts) != 0 {
+		t.Errorf("服务未卸载时不该撤防火墙: tcp=%v", fp.tcpPorts)
+	}
+}
+
+// TestUninstallClientCleansFirewallAndConfig 锁住客户端卸载的清理范围：
+// 只卸 SntpClient、只撤自己 Web 端口的 TCP 放行（绝不碰服务端的 UDP 123），
+// 配置与 .tmp 全删、目录空了顺带删。
+func TestUninstallClientCleansFirewallAndConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "ntpsync.json")
+	if err := config.SaveClient(cfgPath, &config.ClientConfig{Server: "127.0.0.1:123", Web: "0.0.0.0:8190"}); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+	if err := os.WriteFile(cfgPath+".tmp", []byte("{}"), 0o644); err != nil {
+		t.Fatalf("准备 .tmp 失败: %v", err)
+	}
+
+	fp := &fakeServicePlatform{}
+	if err := uninstallClient(fp, cfgPath, false); err != nil {
+		t.Fatalf("卸载返回错误: %v", err)
+	}
+	if len(fp.uninstalled) != 1 || fp.uninstalled[0] != pal.ClientServiceName {
+		t.Errorf("只应卸载客户端自己的服务 %q，实际 %v", pal.ClientServiceName, fp.uninstalled)
+	}
+	if len(fp.udpPorts) != 0 {
+		t.Errorf("客户端不监听 UDP，不该撤销任何 UDP 放行，实际 %v", fp.udpPorts)
+	}
+	// 8190 = 配置里的 Web 端口；8090 = 默认端口兜底
+	if want := []int{8190, 8090}; !reflect.DeepEqual(fp.tcpPorts, want) {
+		t.Errorf("撤销的 TCP 放行 = %v，期望 %v", fp.tcpPorts, want)
+	}
+	for _, p := range []string{cfgPath, cfgPath + ".tmp"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s 应已删除", p)
+		}
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("数据目录已空，应一并删除")
 	}
 }

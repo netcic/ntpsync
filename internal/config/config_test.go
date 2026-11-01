@@ -164,3 +164,65 @@ func TestExists(t *testing.T) {
 		t.Error("文件存在时应返回 true")
 	}
 }
+
+// TestRemoveDataFilesKeepsSiblingProduct 是「卸载不能误删同机另一个产品」的核心断言：
+// 服务端与客户端共用 %ProgramData%\ntpsync，卸服务端只能删服务端那两个文件，
+// 目录里有客户端的配置时必须原地留下。
+func TestRemoveDataFilesKeepsSiblingProduct(t *testing.T) {
+	dir := t.TempDir()
+	serverCfg := filepath.Join(dir, "ntpsyncd.json")
+	stats := filepath.Join(dir, ServerStatsFileName)
+	clientCfg := filepath.Join(dir, "ntpsync.json")
+
+	for _, p := range []string{serverCfg, stats, clientCfg} {
+		if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("准备文件失败: %v", err)
+		}
+		// 每个文件都留一份 .tmp：写盘中途断电会留下它，卸载必须一起清
+		if err := os.WriteFile(p+TempSuffix, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("准备临时文件失败: %v", err)
+		}
+	}
+
+	removed, err := RemoveDataFiles(serverCfg, stats)
+	if err != nil {
+		t.Fatalf("删除失败: %v", err)
+	}
+	if len(removed) != 4 {
+		t.Errorf("应删掉 4 个文件（含 .tmp），实际 %d：%v", len(removed), removed)
+	}
+	for _, p := range []string{serverCfg, serverCfg + TempSuffix, stats, stats + TempSuffix} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s 应已删除", p)
+		}
+	}
+	// 客户端的文件与目录必须还在
+	for _, p := range []string{clientCfg, clientCfg + TempSuffix} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s 不应被删: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("目录里还有客户端配置，不应被删: %v", err)
+	}
+
+	// 客户端也卸掉后，目录空了就该一起消失
+	if _, err := RemoveDataFiles(clientCfg); err != nil {
+		t.Fatalf("删除客户端配置失败: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("目录已空，应一并删除")
+	}
+}
+
+// TestRemoveDataFilesIdempotent 重复卸载不应报错（文件早就不在了）。
+func TestRemoveDataFilesIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "ntpsync.json")
+	if _, err := RemoveDataFiles(p); err != nil {
+		t.Fatalf("文件不存在时不应报错: %v", err)
+	}
+	if _, err := RemoveDataFiles(""); err != nil {
+		t.Fatalf("空路径不应报错: %v", err)
+	}
+}

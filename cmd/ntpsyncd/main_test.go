@@ -3,6 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -137,10 +140,47 @@ func TestPlanServerInstall_EmptyOldListen(t *testing.T) {
 	}
 }
 
-// fakeServicePlatform 记录卸载时传入的服务名（卸载需提权，故只测决策部分）。
+// TestPlanServerInstall_FillMissingWeb 覆盖升级且旧配置没有 web 字段：
+// 必须把本次的 -web 补写进去，否则升级后 Web 界面不启动；已配过的端口则不能动。
+func TestPlanServerInstall_FillMissingWeb(t *testing.T) {
+	old := &config.ServerConfig{Listen: "0.0.0.0:123", Stratum: 2, Upstream: "ntp.aliyun.com"}
+	got := planServerInstall("0.0.0.0:123", 2, "0.0.0.0:8080", "", time.Hour, true, true, old, nil)
+	if !got.Keep {
+		t.Fatal("旧配置可读时应保留业务参数")
+	}
+	if !got.Write {
+		t.Fatal("旧配置缺 web 时必须补写，否则服务重启后 Web 界面不启动")
+	}
+	if got.Saved == nil || got.Saved.Web != "0.0.0.0:8080" {
+		t.Fatalf("补写应写入本次的 web，实际 %+v", got.Saved)
+	}
+	if got.Saved.Listen != "0.0.0.0:123" || got.Saved.Upstream != "ntp.aliyun.com" {
+		t.Errorf("补写只该动 web、其余保持原值，实际 %+v", *got.Saved)
+	}
+
+	// 旧配置已有 web：保留旧端口、不写盘；防火墙也应按这个生效值取端口。
+	old2 := &config.ServerConfig{Listen: "0.0.0.0:123", Web: "0.0.0.0:9999"}
+	got2 := planServerInstall("0.0.0.0:123", 2, "0.0.0.0:8080", "", time.Hour, true, true, old2, nil)
+	if got2.Write {
+		t.Error("已有 web 时不该落盘，否则会把用户改过的端口顶回去")
+	}
+	if got2.Saved == nil || got2.Saved.Web != "0.0.0.0:9999" {
+		t.Errorf("生效值应为旧配置的端口（防火墙按它放行），实际 %+v", got2.Saved)
+	}
+
+	// 全新安装：写完整配置。
+	if p := planServerInstall("0.0.0.0:123", 2, "0.0.0.0:8080", "", time.Hour, true, false, nil, nil); !p.Write || p.Saved == nil || p.Saved.Web != "0.0.0.0:8080" {
+		t.Errorf("全新安装应写入完整配置，实际 keep=%v write=%v saved=%+v", p.Keep, p.Write, p.Saved)
+	}
+}
+
+// fakeServicePlatform 记录卸载时传入的服务名与撤销的防火墙端口
+// （卸载需提权，故只测决策与调用参数）。
 type fakeServicePlatform struct {
 	pal.Platform
 	uninstalled []string
+	udpPorts    []int
+	tcpPorts    []int
 	err         error
 }
 
@@ -149,7 +189,48 @@ func (f *fakeServicePlatform) UninstallService(name string) error {
 	return f.err
 }
 
-// TestRemoveServerServiceUsesServerName 锁住服务端只卸载自己的 Sntpserver。
+func (f *fakeServicePlatform) RemoveFirewall(port int) error {
+	f.udpPorts = append(f.udpPorts, port)
+	return nil
+}
+
+func (f *fakeServicePlatform) RemoveFirewallTCP(port int) error {
+	f.tcpPorts = append(f.tcpPorts, port)
+	return nil
+}
+
+// TestUninstallServerKeepsConfigWhenServiceRemovalFails 服务没卸掉时不能删配置。
+//
+// 卸载要提权。非管理员跑 uninstall 时如果照样把配置删了，产品却还在，
+// 它下次启动就会退回默认参数（123/8080），现场表现为「配置莫名其妙被重置」。
+// 所以这里的正确行为是：报错退出，配置与统计原样保留，防火墙也不动。
+func TestUninstallServerKeepsConfigWhenServiceRemovalFails(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "ntpsyncd.json")
+	statsPath := filepath.Join(dir, config.ServerStatsFileName)
+	if err := config.Save(cfgPath, &config.ServerConfig{Listen: "0.0.0.0:1123"}); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+	if err := os.WriteFile(statsPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("写统计失败: %v", err)
+	}
+
+	fp := &fakeServicePlatform{err: errors.New("拒绝访问")}
+	if err := uninstallServer(fp, cfgPath, false); err == nil {
+		t.Fatal("服务卸载失败时必须返回错误")
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Errorf("服务未卸载，配置应保留: %v", err)
+	}
+	if _, err := os.Stat(statsPath); err != nil {
+		t.Errorf("服务未卸载，授时统计应保留: %v", err)
+	}
+	if len(fp.udpPorts)+len(fp.tcpPorts) != 0 {
+		t.Errorf("服务未卸载时不该撤防火墙: udp=%v tcp=%v", fp.udpPorts, fp.tcpPorts)
+	}
+}
+
+// TestRemoveServerServiceUsesServerName 锁住服务端只卸载自己的 SntpServer。
 func TestRemoveServerServiceUsesServerName(t *testing.T) {
 	fp := &fakeServicePlatform{}
 	removed, err := removeServerService(fp)
@@ -175,5 +256,65 @@ func TestRemoveServerServiceNotInstalled(t *testing.T) {
 	}
 	if removed {
 		t.Fatal("服务未安装时 removed 应为 false")
+	}
+}
+
+// TestUninstallServerCleansFirewallAndData 锁住卸载的实际清理范围：
+// 只卸自己的服务、防火墙按配置里的端口（外加历史默认端口兜底）、
+// 配置与授时统计（连 .tmp）全删，数据目录空了顺带删掉。
+//
+// 这些断言对应现场最容易怀疑「没卸干净」的三处：服务名、端口放行、%ProgramData% 里的文件。
+func TestUninstallServerCleansFirewallAndData(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "ntpsyncd.json")
+	statsPath := clientStatsPath(cfgPath)
+
+	// 先写配置，再补 .tmp：saveJSON 自己会用一次 .tmp 并改名，顺序反了就测不到它
+	if err := config.Save(cfgPath, &config.ServerConfig{Listen: "0.0.0.0:1123", Web: "0.0.0.0:8180"}); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+	for _, p := range []string{cfgPath + ".tmp", statsPath, statsPath + ".tmp"} {
+		if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("准备 %s 失败: %v", p, err)
+		}
+	}
+
+	fp := &fakeServicePlatform{}
+	if err := uninstallServer(fp, cfgPath, false); err != nil {
+		t.Fatalf("卸载返回错误: %v", err)
+	}
+	if len(fp.uninstalled) != 1 || fp.uninstalled[0] != pal.DefaultServiceName {
+		t.Errorf("只应卸载服务端自己的服务 %q，实际 %v", pal.DefaultServiceName, fp.uninstalled)
+	}
+	// 1123 = 配置里的监听端口；123 = 历史默认（老版本按它建过规则）
+	if want := []int{1123, 123}; !reflect.DeepEqual(fp.udpPorts, want) {
+		t.Errorf("撤销的 UDP 放行 = %v，期望 %v", fp.udpPorts, want)
+	}
+	// 8180 = 配置里的 Web 端口；8080 = 默认；123 = 1.11.2 那版「Web 端口跟随授时端口」
+	if want := []int{8180, 8080, 123}; !reflect.DeepEqual(fp.tcpPorts, want) {
+		t.Errorf("撤销的 TCP 放行 = %v，期望 %v", fp.tcpPorts, want)
+	}
+	for _, p := range []string{cfgPath, cfgPath + ".tmp", statsPath, statsPath + ".tmp"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s 应已删除", p)
+		}
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("数据目录已空，应一并删除")
+	}
+}
+
+// TestUninstallServerKeepConfig -keep-config 只撤服务与防火墙，配置文件留着。
+func TestUninstallServerKeepConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "ntpsyncd.json")
+	if err := config.Save(cfgPath, &config.ServerConfig{Listen: "0.0.0.0:123"}); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+	if err := uninstallServer(&fakeServicePlatform{}, cfgPath, true); err != nil {
+		t.Fatalf("卸载返回错误: %v", err)
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Errorf("-keep-config 时配置应保留: %v", err)
 	}
 }

@@ -10,8 +10,8 @@ REM  前置: 已运行 scripts\build.sh 产出 dist\*-v<ver>-windows-*.exe
 REM  依赖: 已安装 NSIS（makensis 在 PATH 或 scoop shims）
 REM
 REM  产出（dist\）:
-REM    Sntpserver-Setup-v<ver>-amd64.exe   服务端 x64 安装器
-REM    Sntpserver-Setup-v<ver>-arm64.exe   服务端 ARM64 安装器
+REM    SntpServer-Setup-v<ver>-amd64.exe   服务端 x64 安装器
+REM    SntpServer-Setup-v<ver>-arm64.exe   服务端 ARM64 安装器
 REM    SntpClient-Setup-v<ver>-amd64.exe   客户端 x64 安装器
 REM    SntpClient-Setup-v<ver>-arm64.exe   客户端 ARM64 安装器
 REM ============================================================================
@@ -22,7 +22,7 @@ if "%VERSION%"=="" (
   REM 未指定版本时读根目录 VERSION 文件（版本号唯一来源）
   if exist "%~dp0..\VERSION" for /f "usebackq delims=" %%v in ("%~dp0..\VERSION") do if not defined VERSION set "VERSION=%%v"
 )
-if "%VERSION%"=="" set "VERSION=1.10.28"
+if "%VERSION%"=="" set "VERSION=1.11.9"
 
 set "NSI=%~dp0..\packaging\win\ntp-installer.nsi"
 

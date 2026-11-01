@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"ntpsync/internal/duration"
 	"ntpsync/internal/ntp"
 	"ntpsync/internal/pal"
 )
@@ -143,8 +144,10 @@ func (c *Client) Sync() (*Result, error) {
 	// MaxStep 为 MaxStepUnlimited 时不做任何拦截（服务端向上游校时即如此）。
 	if limit, guarded := c.maxStep(); guarded && abs(res.Offset) > limit {
 		res.Skipped = true
-		res.Reason = fmt.Sprintf("偏差 %v 超过阈值 %v，已拒绝自动设钟（防止时间源异常污染本机）",
-			res.Offset, limit)
+		// 用中文单位而非 Go 原始格式：这个原因串会原样进日志与界面，
+		// 直接打 %v 会显示成「-1m25.222119851s」，中文界面里很突兀。
+		res.Reason = fmt.Sprintf("偏差 %s 超过阈值 %s，已拒绝自动设钟（防止时间源异常污染本机）",
+			duration.Format(res.Offset), duration.Format(limit))
 		return res, nil
 	}
 

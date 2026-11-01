@@ -12,6 +12,7 @@
 ```bash
 bash scripts/e2e-local.sh        # 端到端安装回归：安装器字符串 + 布局 + 冒烟 + 服务名隔离
 bash scripts/package.sh --dry-run && bash scripts/check-stage.sh   # Linux 包元数据校验
+bash scripts/verify-uninstall.sh # 卸载残留核查（只读，退出码 0 = 无残留）
 ```
 
 `e2e-local.sh` 分四段：A 段把 NSIS 安装器以「不压缩、不打包文件」的方式重编一份探针，
@@ -42,9 +43,9 @@ C 段真跑服务端 + 客户端打 Web API；D 段用 `status` 子命令验证�
 # Linux
 bash install-server.sh --listen 0.0.0.0:123 --web 8080
 # 或 Windows（管理员）
-install-server.bat /SERVER=0.0.0.0:123 /WEB=8080
+install-server.bat /LISTEN=0.0.0.0:123 /WEB=8080
 ```
-**检查点**：`systemctl status Sntpserver`（或 `sc query Sntpserver`）显示运行中。
+**检查点**：`systemctl status SntpServer`（或 `sc query SntpServer`）显示运行中。
 
 ### 步骤 2：服务端时间核对（R11 防污染关键）
 打开 `http://<服务端IP>:8080`，总览页「服务端当前时间」与可信参考对比，误差 < 1s。
@@ -66,17 +67,39 @@ stratum = 服务端层级 + 1。
 重启服务端机，确认服务端服务自动拉起（开机自启）。
 
 ### 步骤 6：同机双装时卸载互不影响
-1.10.28 起两个产品各装各的目录（`%ProgramFiles%\Sntpserver`、`%ProgramFiles%\SntpClient`），
+
+1.10.28 起两个产品各装各的目录（`%ProgramFiles%\SntpServer`、`%ProgramFiles%\SntpClient`），
 服务名也各自独立。在**同一台机器**上先装服务端、再装客户端，然后：
 
 ```bat
-sc query Sntpserver & sc query SntpClient              :: 两个服务都在
+sc query SntpServer & sc query SntpClient              :: 两个服务都在
+dir "%ProgramData%\ntpsync"                            :: 两份配置都在（ntpsyncd.json + ntpsync.json）
 "%ProgramFiles%\SntpClient\SntpClient.exe" uninstall  :: 只卸载客户端
-sc query Sntpserver & sc query SntpClient              :: Sntpserver 仍 RUNNING，SntpClient 已不存在
+sc query SntpServer & sc query SntpClient              :: SntpServer 仍 RUNNING，SntpClient 已不存在
+dir "%ProgramData%\ntpsync"                            :: ntpsync.json 已删，ntpsyncd.json 与授时统计仍在
 ```
 
-再反向验证一次（先卸服务端，`SntpClient` 仍在跑）。也可从「添加/删除程序」分别卸载，
-两边应当各删各的服务——这是历史 bug「卸客户端把服务端服务一起删掉」的回归点。
+**关键检查点（1.11.8 起）**：卸客户端后 `SntpServer-clients.json` **必须还在**——
+它属于服务端的授时统计；目录 `%ProgramData%\ntpsync` 也应保留（非空），
+不能出现「卸客户端顺手删了服务端数据」或「目录被连带删空」。
+
+再反向验证一次（先卸服务端，`SntpClient` 仍在跑、`ntpsync.json` 仍在）。也可从
+「添加/删除程序」分别卸载，两边应当各删各的服务——这是历史 bug「卸客户端把服务端服务一起删掉」的回归点。
+
+两个角色都卸完后，跑残留核查脚本，要求**退出码 0**（无残留）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-uninstall.ps1
+echo %ERRORLEVEL%                                       :: 期望 0
+```
+
+```bash
+bash scripts/verify-uninstall.sh; echo "exit=$?"         # 期望 exit=0
+```
+
+若有 `[FAIL]` 项，按[`DEPLOY.md` 十一](DEPLOY.md#十一卸载清理清单与残留核查)的清单逐项对；
+`[KEEP]` 表示刻意保留（如 1.0.x 旧程序目录还在时的旧注册表键），不算失败。
+
 
 ### 步骤 7：从 v1.0.0 升级
 
@@ -88,7 +111,7 @@ UDP 123 端口，表现为「装完了但校不到时」。覆盖位置：Window
 ```bat
 :: 直接双击新版安装器即可，它会先清掉旧服务名，避免两个服务抢 UDP 123
 sc query ntpsyncd    :: 应报「指定的服务未安装」（已被新版安装器清理）
-sc query Sntpserver  :: RUNNING
+sc query SntpServer  :: RUNNING
 ```
 
 旧程序目录与它在「添加/删除程序」里的条目仍保留（不自动删用户的旧文件），

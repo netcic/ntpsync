@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"ntpsync/internal/config"
 )
 
 // 授时统计的持久化。
@@ -45,7 +47,7 @@ func (s *Server) SaveClients(path string) error {
 	if err != nil {
 		return fmt.Errorf("server: 序列化统计失败: %w", err)
 	}
-	tmp := path + ".tmp"
+	tmp := path + config.TempSuffix
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return fmt.Errorf("server: 写入统计失败: %w", err)
 	}

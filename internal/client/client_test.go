@@ -103,6 +103,9 @@ func (f *fakePlatform) StartService(string) error              { return nil }
 func (f *fakePlatform) StopService(string) error               { return nil }
 func (f *fakePlatform) ServiceStatus(string) (string, error)   { return pal.ServiceStatusRunning, nil }
 func (f *fakePlatform) ConfigureFirewall(int) error            { return nil }
+func (f *fakePlatform) ConfigureFirewallTCP(int) error         { return nil }
+func (f *fakePlatform) RemoveFirewall(int) error               { return nil }
+func (f *fakePlatform) RemoveFirewallTCP(int) error            { return nil }
 
 // newTestClient 构造一个不触网的客户端：偏差由参数决定。
 func newTestClient(offset time.Duration, maxStep time.Duration, fp *fakePlatform) *Client {
@@ -150,6 +153,13 @@ func TestSyncDefaultStepStillRejects(t *testing.T) {
 	}
 	if fp.setCalls != 0 {
 		t.Fatalf("被拦截时不应设钟，实际调用 %d 次", fp.setCalls)
+	}
+	// 原因串会原样进日志和界面，必须用中文单位，不能是 Go 原始格式（17s / 5s）。
+	if !strings.Contains(res.Reason, "超过阈值 5秒") {
+		t.Errorf("原因串应用中文单位，实际 %q", res.Reason)
+	}
+	if strings.Contains(res.Reason, "5s") || strings.Contains(res.Reason, "17s") {
+		t.Errorf("原因串不应出现 Go 原始时长格式，实际 %q", res.Reason)
 	}
 }
 

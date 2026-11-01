@@ -2,10 +2,10 @@
 # package.sh - 把编译产物打包成 deb / rpm（Linux / 国产 OS 分发包）。
 #
 # 用法（在 Linux 机上运行）:
-#   bash scripts/package.sh                 # 自动打包 dist/ 下所有 linux 二进制（默认 1.10.28）
+#   bash scripts/package.sh                 # 自动打包 dist/ 下所有 linux 二进制（版本默认取 VERSION）
 #   bash scripts/package.sh 1.10.29         # 指定版本号
 #   bash scripts/package.sh --dry-run       # 只生成 staging 树与元数据，不调用 dpkg-deb/rpmbuild
-#   CLIENT_SERVER=192.168.1.10:123 bash scripts/package.sh 1.10.28   # 指定客户端校时目标
+#   CLIENT_SERVER=192.168.1.10:123 bash scripts/package.sh 1.11.3   # 指定客户端校时目标
 #
 # 前置: 已运行 scripts/build.sh 产出 dist/Sntp*-v<ver>-linux-*。
 # 依赖: dpkg-deb（deb 系）与 rpmbuild（rpm 系）。缺工具会跳过对应格式并提示；
@@ -13,7 +13,7 @@
 #       配合 scripts/check-stage.sh 做离线校验。
 #
 # 产出（dist/，包名统一小写——dpkg 不接受大写包名；可执行文件与 systemd 单元保留
-# 产品名 Sntpserver / SntpClient，与服务名一致）:
+# 产品名 SntpServer / SntpClient，与服务名一致）:
 #   服务端: sntpserver_<ver>_<arch>.deb / sntpserver-<ver>-1.<arch>.rpm
 #   客户端: sntpclient_<ver>_<arch>.deb / sntpclient-<ver>-1.<arch>.rpm
 #
@@ -76,19 +76,23 @@ echo ""
 # 角色元数据的唯一来源：改产品名或默认参数只需改这里。
 # bash 没有返回值，用全局变量输出，避免每个调用点重复写同样四五个变量。
 # ---------------------------------------------------------------------------
-M_BIN=""; M_PKG=""; M_DISPLAY=""; M_DESC=""; M_EXECSTART=""
+M_BIN=""; M_PKG=""; M_DISPLAY=""; M_DESC=""; M_EXECSTART=""; M_CFG_FILES=""
 pkg_meta() {
   local role="$1"
   if [ "$role" = "server" ]; then
-    M_BIN="Sntpserver"; M_PKG="sntpserver"
-    M_DISPLAY="Sntpserver - 局域网 NTP 授时服务"
+    M_BIN="SntpServer"; M_PKG="sntpserver"
+    M_DISPLAY="SntpServer - 局域网 NTP 授时服务"
     M_DESC="以本机硬件时钟为权威时间源，向局域网设备提供 NTP 授时。"
-    M_EXECSTART="/usr/local/bin/Sntpserver run -l 0.0.0.0:123 -web 127.0.0.1:8080"
+    M_EXECSTART="/usr/local/bin/SntpServer run -l 0.0.0.0:123 -web 8080"
+    # 本包在运行期写过的文件：配置 + 授时统计（internal/config 的
+    # ServerStatsFileName）。卸载时要一并删掉，否则重装前一直留着上一份设置。
+    M_CFG_FILES="/etc/ntpsync/ntpsyncd.json /etc/ntpsync/SntpServer-clients.json"
   else
     M_BIN="SntpClient"; M_PKG="sntpclient"
     M_DISPLAY="SntpClient - 局域网 NTP 校时客户端"
     M_DESC="开机自启，周期性向局域网 NTP 服务端校准本机时钟。"
-    M_EXECSTART="/usr/local/bin/SntpClient daemon -s ${CLIENT_SERVER} -interval ${CLIENT_INTERVAL} -step ${CLIENT_STEP} -web 127.0.0.1:8090"
+    M_EXECSTART="/usr/local/bin/SntpClient daemon -s ${CLIENT_SERVER} -interval ${CLIENT_INTERVAL} -step ${CLIENT_STEP} -web 8090"
+    M_CFG_FILES="/etc/ntpsync/ntpsync.json"
   fi
 }
 
@@ -171,15 +175,19 @@ Maintainer: NTP Sync <admin@local>
 Description: $M_DISPLAY
  $M_DESC
 EOF
-    # 旧版服务名（v1.0.x）：升级时旧服务不会自己消失，会和新服务抢 UDP 123。
-    # Windows 安装器里已做同样处理（见 ntp-installer.nsi 的 LEGACY_SERVICE 段）。
-    if [ "$role" = "server" ]; then legacy="ntpsyncd"; else legacy="ntpsync"; fi
+    # 历史服务名：v1.0.x 的 ntpsyncd / ntpsync，以及 1.11.x 及以前的服务端
+    # Sntpserver（小写 p）。Linux 的 unit 文件名区分大小写，老 unit 不清掉会继续
+    # 开机自启并抢走 UDP 123 / TCP 8080。Windows 安装器里已做同样处理
+    # （见 ntp-installer.nsi 的 LEGACY_SERVICE 段）。
+    if [ "$role" = "server" ]; then legacies="ntpsyncd Sntpserver"; else legacies="ntpsync"; fi
     cat > "$deb_root/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
-systemctl stop $legacy >/dev/null 2>&1 || true
-systemctl disable $legacy >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/$legacy.service
+for old in $legacies; do
+  systemctl stop \$old >/dev/null 2>&1 || true
+  systemctl disable \$old >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/\$old.service /usr/local/bin/\$old
+done
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable $bin >/dev/null 2>&1 || true
 exit 0
@@ -191,7 +199,19 @@ systemctl stop $bin >/dev/null 2>&1 || true
 systemctl disable $bin >/dev/null 2>&1 || true
 exit 0
 EOF
-    chmod 0755 "$deb_root/DEBIAN/postinst" "$deb_root/DEBIAN/prerm"
+    # postrm：删除本包写过的配置与授时统计（含原子写入留下的 .tmp）。
+    # /etc/ntpsync 由服务端与客户端共用，所以用 rmdir——目录空了才删，
+    # 还留着另一个包的配置时自然删不掉。
+    cat > "$deb_root/DEBIAN/postrm" <<EOF
+#!/bin/sh
+set -e
+for f in $M_CFG_FILES; do
+  rm -f "\$f" "\$f.tmp"
+done
+rmdir /etc/ntpsync 2>/dev/null || true
+exit 0
+EOF
+    chmod 0755 "$deb_root/DEBIAN/postinst" "$deb_root/DEBIAN/prerm" "$deb_root/DEBIAN/postrm"
 
     # ---- rpm ----
     rpm_root="$STAGE/rpmbuild"
@@ -217,15 +237,26 @@ install -m 0755 $repo_root/$src %{buildroot}/usr/local/bin/$bin
 cp $pkg_root_abs/usr/lib/systemd/system/${bin}.service %{buildroot}/usr/lib/systemd/system/
 
 %post
-systemctl stop $legacy >/dev/null 2>&1 || true
-systemctl disable $legacy >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/$legacy.service
+for old in $legacies; do
+  systemctl stop \$old >/dev/null 2>&1 || true
+  systemctl disable \$old >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/\$old.service /usr/local/bin/\$old
+done
 systemctl daemon-reload || true
 systemctl enable $bin || true
 
 %preun
 systemctl stop $bin || true
 systemctl disable $bin || true
+
+%postun
+# \$1 = 0 表示最后一个实例被删除（真正的卸载，而不是升级）
+if [ "\$1" -eq 0 ]; then
+  for f in $M_CFG_FILES; do
+    rm -f "\$f" "\$f.tmp"
+  done
+  rmdir /etc/ntpsync 2>/dev/null || true
+fi
 
 %files
 /usr/local/bin/$bin

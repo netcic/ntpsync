@@ -7,8 +7,8 @@
 # 也能验，配合 package.sh --dry-run 使用。
 #
 # 用法:
-#   bash scripts/package.sh --dry-run 1.10.28   # 先生成 dist/pkgstage/
-#   bash scripts/check-stage.sh [版本号]        # 再校验，默认 1.10.28
+#   bash scripts/package.sh --dry-run 1.11.3   # 先生成 dist/pkgstage/
+#   bash scripts/check-stage.sh [版本号]        # 再校验，默认取 VERSION
 #
 # 校验范围: 文件清单 / 可执行位 / ELF 架构 / 版本一致性 / 包名规范 / control 字段 /
 #           maintainer 脚本服务名 / spec 字段与 %files / systemd unit 的 ExecStart 参数
@@ -35,8 +35,8 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) FS_POSIX=0;; esac
 permchk() { if [ "$FS_POSIX" -eq 1 ]; then chk "$1" "$2"; else skip "$1（Windows 无 POSIX 权限位，需在 Linux 上复验）"; fi; }
 
 # 目录名 -> 角色元数据。与 package.sh 的 pkg_meta 保持一致（改那里时同步这里）。
-role_bin()   { [ "$1" = "sntpserver" ] && echo "Sntpserver" || echo "SntpClient"; }
-other_bin()  { [ "$1" = "sntpserver" ] && echo "SntpClient" || echo "Sntpserver"; }
+role_bin()   { [ "$1" = "sntpserver" ] && echo "SntpServer" || echo "SntpClient"; }
+other_bin()  { [ "$1" = "sntpserver" ] && echo "SntpClient" || echo "SntpServer"; }
 main_src()   { [ "$1" = "sntpserver" ] && echo "cmd/ntpsyncd/main.go" || echo "cmd/ntpsync/main.go"; }
 # v1.0.x 遗留服务名：升级时必须清掉，否则新旧服务抢 UDP 123。
 legacy_name(){ [ "$1" = "sntpserver" ] && echo "ntpsyncd" || echo "ntpsync"; }
@@ -84,6 +84,7 @@ for dir in "${stages[@]}"; do
   chk "清单: systemd unit"                  "$([ -f "$dir/usr/lib/systemd/system/$bin.service" ] && echo 1 || echo 0)"
   chk "清单: DEBIAN/control"                "$([ -f "$dir/DEBIAN/control" ] && echo 1 || echo 0)"
   chk "清单: DEBIAN/postinst + prerm"       "$([ -f "$dir/DEBIAN/postinst" ] && [ -f "$dir/DEBIAN/prerm" ] && echo 1 || echo 0)"
+  chk "清单: DEBIAN/postrm"                 "$([ -f "$dir/DEBIAN/postrm" ] && echo 1 || echo 0)"
   chk "清单: SPECS/$pkg.spec"               "$([ -f "$dir/SPECS/$pkg.spec" ] && echo 1 || echo 0)"
   [ -f "$dir/DEBIAN/control" ] || { echo "  （control 缺失，跳过该包后续校验）"; continue; }
 
@@ -117,12 +118,34 @@ for dir in "${stages[@]}"; do
     # 行尾常带重定向（>/dev/null 2>&1），不能用 $ 锚定，改用「服务名后为非标识符字符」
     chk "$ms: 操作 $bin"                    "$(grep -qE "systemctl (daemon-reload|enable|stop|disable) $bin([^A-Za-z0-9_-]|$)" "$p" && echo 1 || echo 0)"
     chk "$ms: 不含对方服务 $other"           "$(grep -q "$other" "$p" && echo 0 || echo 1)"
-    # 升级路径：v1.0.x 的旧服务若不清，会和新服务抢同一个 UDP 123
+    # 升级路径：历史服务（v1.0.x 的 ntpsyncd、1.11.x 的 Sntpserver）若不清，
+    # 老 unit 会继续开机自启并抢走 UDP 123 / TCP 8080。脚本里以
+    # `for old in <列表>` 逐个 stop/disable/删 unit 的形式落地。
     if [ "$ms" = "postinst" ]; then
-      chk "$ms: 清理旧版服务 $legacy"        "$(grep -q "systemctl stop $legacy" "$p" && echo 1 || echo 0)"
-      chk "$ms: 删除旧版 unit 文件"           "$(grep -q "/etc/systemd/system/$legacy.service" "$p" && echo 1 || echo 0)"
+      chk "$ms: 清理历史服务 $legacy"        "$(grep -qE "for old in .*$legacy" "$p" && echo 1 || echo 0)"
+      chk "$ms: 删除旧 unit 文件"            "$(grep -q 'rm -f /etc/systemd/system/\$old.service' "$p" && echo 1 || echo 0)"
     fi
   done
+
+  # 4.5 postrm：卸载时删除本包写过的配置与授时统计。
+  # /etc/ntpsync 由服务端与客户端共用，脚本必须只删自己那份、且只删空目录——
+  # 删错就是「卸了服务端，客户端的校时目标也跟着没了」。
+  pr="$dir/DEBIAN/postrm"
+  if [ -f "$pr" ]; then
+    permchk "postrm: 可执行"                "$([ -x "$pr" ] && echo 1 || echo 0)"
+    if [ "$pkg" = "sntpserver" ]; then
+      own_cfg="/etc/ntpsync/ntpsyncd.json"; other_cfg="/etc/ntpsync/ntpsync.json"
+    else
+      own_cfg="/etc/ntpsync/ntpsync.json"; other_cfg="/etc/ntpsync/ntpsyncd.json"
+    fi
+    chk "postrm: 删除本包配置 $own_cfg"      "$(grep -q "$own_cfg" "$pr" && echo 1 || echo 0)"
+    chk "postrm: 不含对方配置 $other_cfg"    "$(grep -q "$other_cfg" "$pr" && echo 0 || echo 1)"
+    chk "postrm: 只删空目录(rmdir 而非 rm -rf)" "$(grep -q 'rmdir /etc/ntpsync' "$pr" && ! grep -q 'rm -rf /etc/ntpsync' "$pr" && echo 1 || echo 0)"
+    chk "postrm: 连 .tmp 一起删"             "$(grep -q '\$f.tmp' "$pr" && echo 1 || echo 0)"
+    if [ "$pkg" = "sntpserver" ]; then
+      chk "postrm: 清理授时统计"             "$(grep -q 'SntpServer-clients.json' "$pr" && echo 1 || echo 0)"
+    fi
+  fi
 
   # 5. systemd unit
   unit="$dir/usr/lib/systemd/system/$bin.service"
@@ -160,7 +183,8 @@ for dir in "${stages[@]}"; do
     chk "spec: %files 与包内文件一致"       "$([ "$files" = "$want_files" ] && echo 1 || echo 0)"
     chk "spec: %install 使用绝对路径"       "$(sed -n '/^%install/,/^%/p' "$spec" | grep -qE '(install|cp) [^$%/]*/\$' && echo 0 || echo 1)"
     chk "spec: 不含对方服务 $other"          "$(grep -q "$other" "$spec" && echo 0 || echo 1)"
-    chk "spec: %post 清理旧版服务 $legacy"   "$(sed -n '/^%post/,/^%/p' "$spec" | grep -q "systemctl stop $legacy" && echo 1 || echo 0)"
+    chk "spec: %post 清理历史服务 $legacy"   "$(sed -n '/^%post/,/^%/p' "$spec" | grep -qE "for old in .*$legacy" && echo 1 || echo 0)"
+    chk "spec: %postun 清理本包配置"          "$(sed -n '/^%postun/,/^%/p' "$spec" | grep -q '/etc/ntpsync/' && echo 1 || echo 0)"
   fi
 
   # 7. 版本与 dist 中二进制文件名一致

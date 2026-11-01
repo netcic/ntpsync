@@ -1,9 +1,13 @@
 package web
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -197,6 +201,60 @@ func TestConfigSavesChineseInterval(t *testing.T) {
 	}
 }
 
+// TestIndexFaviconURLCarriesContentHash 图标 URL 必须带内容指纹，且能被正常取到。
+//
+// 背景：浏览器把 favicon 单独存在历史库（Chrome Favicons / Firefox favicons.sqlite）
+// 里，按页面 URL 记；响应的 no-store 清不掉已有记录，F5 也不一定换。于是「程序里
+// 图标换了、用户看到的还是旧的」这种问题只能靠清浏览器数据自救。把图标内容哈希
+// 拼进 URL 后，图标一变 URL 就变，旧缓存自然失效。
+func TestIndexFaviconURLCarriesContentHash(t *testing.T) {
+	mux := http.NewServeMux()
+	newTestHandler(t, nil, nil).Routes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := rec.Body.String()
+
+	if strings.Contains(html, faviconVerPlaceholder) {
+		t.Fatalf("页面里仍残留占位符 %q，说明首页没有走替换逻辑", faviconVerPlaceholder)
+	}
+	m := regexp.MustCompile(`href="/favicon\.ico\?v=([0-9a-f]{8})"`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatalf("favicon 链接缺少 8 位内容指纹，页面中实际为：%s",
+			firstMatch(html, `href="/favicon[^"]*"`))
+	}
+
+	// 指纹必须是内嵌 favicon.ico 的真实哈希：写死或算错都会让「换图标」再次失效。
+	data, err := staticFS.ReadFile("favicon.ico")
+	if err != nil {
+		t.Fatalf("内嵌 favicon.ico 读不到: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	if want := fmt.Sprintf("%x", sum[:4]); m[1] != want {
+		t.Errorf("图标指纹应为 %s（favicon.ico 的 sha256 前 8 位），实际 %s", want, m[1])
+	}
+
+	// 带 query 的 URL 必须照常返回图标本体（FileServer 会忽略 query）。
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/favicon.ico?v="+m[1], nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("GET /favicon.ico?v=%s 应返回 200，实际 %d", m[1], rec2.Code)
+	}
+	if !bytes.Equal(rec2.Body.Bytes(), data) {
+		t.Error("带指纹的 favicon 响应内容与内嵌文件不一致")
+	}
+	if cc := rec2.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("favicon 响应应禁止缓存，实际 Cache-Control=%q", cc)
+	}
+}
+
+// firstMatch 取第一处匹配用于断言失败时的现场信息（取不到返回空串）。
+func firstMatch(s, pattern string) string {
+	if m := regexp.MustCompile(pattern).FindString(s); m != "" {
+		return m
+	}
+	return "（未找到 favicon 链接）"
+}
+
 // TestStaticFavicon 内嵌 favicon.ico 必须可被浏览器取到，且是合法的 ICO。
 // 图标从 embedding 里掉出去时（改 embed 指令、换目录）这里会立刻报警。
 func TestStaticFavicon(t *testing.T) {
@@ -222,7 +280,7 @@ func TestStaticFavicon(t *testing.T) {
 	}
 }
 
-// TestIndexBrandAndIcon 页面必须带品牌图标与「Sntpserver」标识。
+// TestIndexBrandAndIcon 页面必须带品牌图标与「SntpServer」标识。
 // 早前 base64 图标注入曾把整个 HTML 写坏（缺 style/body），这里做结构性兜底。
 func TestIndexBrandAndIcon(t *testing.T) {
 	mux := http.NewServeMux()
@@ -238,8 +296,8 @@ func TestIndexBrandAndIcon(t *testing.T) {
 	wants := []struct{ name, sub string }{
 		{"品牌图标", `id="brandIco"`},
 		{"图标为内嵌图片", `class="logo-ico"`},
-		{"默认品牌名", `Sntpserver`},
-		{"favicon 指向 ICO", `href="/favicon.ico"`},
+		{"默认品牌名", `SntpServer`},
+		{"favicon 指向 ICO", `href="/favicon.ico?v=`},
 		{"样式块", `<style>`},
 		{"状态详情容器", `id="statusDetail"`},
 	}
