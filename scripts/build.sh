@@ -45,6 +45,13 @@ export CGO_ENABLED=0
 # 时依赖已在本地模块缓存，可直接编译。可用环境变量覆盖。
 export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 
+# Windows 目标固定用 Go 1.20.14 编译——这是最后一个支持 Windows 7 的 Go 版本。
+# Go 1.21 起运行时链接 bcryptprimitives.dll!ProcessPrng，Win7 上该导出不存在，
+# 二进制在加载阶段就失败，现场看到的是安装器弹「服务注册失败」（程序根本没起来）。
+# 首次构建会自动下载该工具链（约 100 MB，走 GOPROXY）；离线机器可预先
+# `GOTOOLCHAIN=go1.20.14 go version` 下载一次。Linux 目标不受影响，用本机工具链。
+WIN_GO="${WIN_GO:-go1.20.14}"
+
 mkdir -p dist
 
 # Windows exe 的「版本/产品名称」来自 cmd/*/resource_windows_*.syso。若本机装了
@@ -85,10 +92,24 @@ for entry in "${TARGETS[@]}"; do
     echo "编译 ${name} ${os}/${arch} -> ${out}"
     # -X main.version：把版本号注入二进制，Web 界面与 /api/status 才能显示真实版本，
     # 现场排查时不必靠文件名猜。
-    GOOS="$os" GOARCH="$arch" "$GO" build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
-      -o "$out" "./cmd/${dir}"
+    LDFLAGS="-s -w -X main.version=${VERSION}"
+    if [ "$os" = "windows" ]; then
+      env GOTOOLCHAIN="$WIN_GO" GOOS="$os" GOARCH="$arch" \
+        "$GO" build -trimpath -ldflags "$LDFLAGS" -o "$out" "./cmd/${dir}"
+    else
+      env GOOS="$os" GOARCH="$arch" \
+        "$GO" build -trimpath -ldflags "$LDFLAGS" -o "$out" "./cmd/${dir}"
+    fi
 
     [ -f "$out" ] || { echo "错误：未生成 $out" >&2; exit 1; }
+
+    # 防回归：Windows 产物绝不能引用 Win7 缺失的 API。一旦有人把工具链换回 1.21+，
+    # 这里会当场失败，而不是等现场装到 Win7 机器上才报「服务注册失败」。
+    if [ "$os" = "windows" ] && grep -qa "ProcessPrng" "$out"; then
+      echo "错误：$out 依赖 bcryptprimitives!ProcessPrng，无法在 Windows 7 运行。" >&2
+      echo "      当前 Windows 工具链是 ${WIN_GO}，请确认它确实是 Go 1.20.x。" >&2
+      exit 1
+    fi
   done
 done
 

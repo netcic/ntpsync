@@ -53,6 +53,11 @@ x86 + ARM，支持企业静默批量部署。
 
 ### 3.0 独立安装程序（推荐，普通用户双击即可）
 
+> **系统要求**：Windows 7 SP1 及以上（含 8/8.1/10/11、Server 2008 R2+），x64 或 ARM64。
+> **安装包请用 1.11.10 或更高版本**：1.11.9 及更早的 Windows 版是用 Go 1.21+ 编译的，
+> 其运行时依赖 Win10 才有的 `bcryptprimitives.dll!ProcessPrng`，在 Win7 上二进制**加载阶段
+> 就失败**，现场表现是安装器弹「服务注册失败，安装未完成」。详见「十二、Windows 7 支持与构建约束」。
+
 **GUI 向导安装**：双击对应架构的 `*-Setup-v<ver>-*.exe`，一路「下一步」即可——向导只有
 「欢迎 → 安装目录 → 安装 → 完成」四步，**不再询问运行参数**。安装器会自动：
 复制程序 → 注册系统服务（开机自启）→ 放行防火墙（仅服务端）→ 建开始菜单项，
@@ -82,10 +87,10 @@ x86 + ARM，支持企业静默批量部署。
 
 ```bat
 :: 服务端静默安装（可选配上游时间源）
-SntpServer-Setup-v1.11.9-amd64.exe /S /LISTEN=0.0.0.0:123 /UPSTREAM=ntp.aliyun.com /UPSTREAM-INTERVAL=1小时 /WEB=8080
+SntpServer-Setup-v1.11.10-amd64.exe /S /LISTEN=0.0.0.0:123 /UPSTREAM=ntp.aliyun.com /UPSTREAM-INTERVAL=1小时 /WEB=8080
 
 :: 客户端静默安装
-SntpClient-Setup-v1.11.9-amd64.exe /S /SERVER=192.168.1.10:123 /INTERVAL=15分 /STEP=5秒 /WEB=8090
+SntpClient-Setup-v1.11.10-amd64.exe /S /SERVER=192.168.1.10:123 /INTERVAL=15分 /STEP=5秒 /WEB=8090
 ```
 
 | 安装器参数 | 服务端 | 客户端 | 说明 |
@@ -323,7 +328,7 @@ Web 界面**固定只对局域网开放**（监听 `0.0.0.0`）；端口独立�
 SntpServer run -l 0.0.0.0:123 -web 8080 -web-token 换成你的令牌
 SntpClient daemon -s 192.168.1.10:123 -web 8090 -web-token 换成你的令牌
 # 静默安装（/WEBLAN=1 已无作用，保留兼容）
-SntpServer-Setup-v1.11.9-amd64.exe /S /LISTEN=0.0.0.0:123 /WEB=8080 /WEBTOKEN=换成你的令牌
+SntpServer-Setup-v1.11.10-amd64.exe /S /LISTEN=0.0.0.0:123 /WEB=8080 /WEBTOKEN=换成你的令牌
 ```
 
 - **Web 端口与授时端口分开**：改 `-l` 的端口**不会**动 Web 端口。现场的书签、
@@ -529,3 +534,62 @@ NTPSYNC_CFG_DIR=/tmp/ntpsync bash scripts/verify-uninstall.sh   # 配置目录�
 > `scripts/check-stage.sh` 另外断言 deb/rpm 维护脚本的行为。所以「改名忘改脚本」会在
 > `go test ./...` 阶段就红掉，不会等到现场卸载才发现残留。
 
+
+---
+
+## 十二、Windows 7 支持与构建约束
+
+### 12.1 现场现象与根因
+
+在 Win7 上装 1.11.9 及更早版本时，安装向导走到「注册系统服务」一步会弹：
+
+```
+服务注册失败，安装未完成。
+可能是服务名被占用或权限不足……
+```
+
+这条提示会误导排查方向——**不是权限问题，也不是服务名冲突，而是程序根本没启动起来**。
+安装器用 `nsExec::ExecToLog` 调 `SntpClient.exe install ...`，拿到的退出码非 0 就报这句；
+而 Win7 上该 exe 在**加载阶段**就被系统拒绝，进程从未运行。
+
+根因是 Go 工具链：**Go 1.21 起，Windows 运行时链接 `bcryptprimitives.dll!ProcessPrng`**，
+该导出自 Win10 才有（Win7 的 `bcryptprimitives.dll` 里没有这个符号）。所以 1.21+ 编译的
+exe 在 Win7 上会直接报「无法定位程序输入点 ProcessPrng 于动态链接库 bcryptprimitives.dll 上」。
+而 1.11.9 及更早版本正是用 Go 1.26 工具链构建的。
+
+### 12.2 现场 30 秒判定
+
+在该 Win7 机器上打开 cmd，直接运行安装目录里的 exe：
+
+```bat
+cd /d C:/Program Files\SntpClient
+SntpClient.exe status
+```
+
+- 报「无法定位程序输入点 ProcessPrng」→ 就是本节的工具链问题，换 1.11.10+ 安装包即可；
+- 若 exe 能正常运行、只是 `install` 报权限/服务名错误 → 按提示以管理员身份重试。
+
+也可在安装器上点「显示详细信息」，看那行 `服务注册失败，退出码 <n>`：退出码是
+`-1073741511`（0xC0000139，即入口点缺失）一类的加载失败值时，即为工具链问题。
+
+### 12.3 本版的解决办法
+
+| 位置 | 做法 |
+|---|---|
+| `go.mod` | 语言版本固定 `go 1.20`（不是笔误，见文件内注释），使 1.20 工具链可编译，并让各平台语义一致 |
+| `scripts/build.sh` | Windows 目标用 `GOTOOLCHAIN=go1.20.14` 编译；Linux 目标仍用本机最新工具链。可用 `WIN_GO` 覆盖 |
+| 构建防回归 | 每个 Windows 产物编译后检查二进制里是否残留 `ProcessPrng`，有则**立即失败**，不把问题留到现场 |
+| 安装器提示 | 「服务注册失败」对话框补了一句 Win7 自查线索，避免下次又按权限/服务名方向排查 |
+
+Go 1.20.14 是最后一个支持 Win7 的版本，也是 1.20 分支的最终补丁版。首次构建需要下载该工具链
+（约 100 MB，走 `GOPROXY`）；离线构建机可先执行一次 `GOTOOLCHAIN=go1.20.14 go version` 预取。
+
+### 12.4 代价与已知边界
+
+- **代价**：Windows 版用的是已停止维护的 Go 1.20 标准库，2024 年 2 月之后的新 CVE 修复不会进入
+  Windows 产物；Linux 产物仍用新工具链。若某天全部机器都升到 Win10+，把 `go.mod` 的语言版本
+  改回最新、并去掉 `build.sh` 里的 `WIN_GO` 即可恢复（届时防回归检查也会自动失效）。
+- **Web 界面在 Win7 自带 IE11 上不可用**：页面用到 `fetch` 与 `NodeList.forEach`，IE11 不支持，
+  表现为页面能打开但数据区空白。请用 Chrome/Edge/新版 Firefox 访问，或从其它机器打开
+  `http://<Win7机器IP>:8080`。**授时与校时功能不受浏览器影响**。
+- Win7 需 SP1；Win7 裸机（无 SP1）未做验证 `[待确认]`。

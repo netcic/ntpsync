@@ -7,7 +7,7 @@
 > 附带 **Motrix 风格**的 Web 图形管理界面。
 
 > **产品命名（1.10.28 起）**：服务端发布名 **SntpServer**、客户端 **SntpClient**；所有分发产物
-> 文件名一律带版本号（如 `SntpServer-v1.11.9-windows-amd64.exe`），不再产出无版本副本。
+> 文件名一律带版本号（如 `SntpServer-v1.11.10-windows-amd64.exe`），不再产出无版本副本。
 > 安装目录 `%ProgramFiles%\SntpServer` 与 `%ProgramFiles%\SntpClient`，系统服务名同名；
 > 配置落在 `%ProgramData%\ntpsync`（Windows）/ `/etc/ntpsync`（Linux），升级可沿用旧配置。
 > 不写日志文件、不建缓存目录，日志只在内存环形缓冲（Web「日志」页）与控制台。
@@ -347,13 +347,20 @@ Web 参数页保存后**立即生效**（守护循环当场按新间隔重排，
 
 ## 构建
 
-开发环境需 Go 1.23+。一键交叉编译全矩阵：
+本机需装 Go 1.23+（Linux 目标用它编译即可）。**Windows 目标另需 Go 1.20.14**——这是最后一个
+支持 Windows 7 的版本，`build.sh` 会用 `GOTOOLCHAIN` 自动切换，首次构建自动下载（约 100 MB）。
+
+一键交叉编译全矩阵：
 
 ```bash
 bash scripts/build.sh
 ```
 
-版本号统一写在根目录的 **`VERSION`** 文件里（当前 `1.11.1`），构建、打包、安装器、
+`go.mod` 的语言版本固定为 `go 1.20`（原因见文件内注释），Windows 产物编译后会检查是否残留
+Win7 缺失的 `ProcessPrng` 符号，有则直接构建失败——避免把「装到 Win7 才报服务注册失败」的问题带出去。
+细节见 [DEPLOY.md §十二](DEPLOY.md#十二windows-7-支持与构建约束)。
+
+版本号统一写在根目录的 **`VERSION`** 文件里（当前 `1.11.10`），构建、打包、安装器、
 Windows 版本资源全部从它读取，升版只改这一处。需要临时编一个别的版本时把版本号
 作为参数传入即可覆盖：`bash scripts/build.sh 1.10.29`。
 

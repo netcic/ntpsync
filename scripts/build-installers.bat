@@ -22,7 +22,7 @@ if "%VERSION%"=="" (
   REM 未指定版本时读根目录 VERSION 文件（版本号唯一来源）
   if exist "%~dp0..\VERSION" for /f "usebackq delims=" %%v in ("%~dp0..\VERSION") do if not defined VERSION set "VERSION=%%v"
 )
-if "%VERSION%"=="" set "VERSION=1.11.9"
+if "%VERSION%"=="" set "VERSION=1.11.10"
 
 set "NSI=%~dp0..\packaging\win\ntp-installer.nsi"
 

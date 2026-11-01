@@ -2,11 +2,11 @@
 ;  ntp-installer.nsi — 局域网 NTP 授时系统 Windows 安装器模板
 ;
 ;  通过 -D 宏区分「服务端 / 客户端」角色，编译时传入：
-;    makensis -DROLE=server -DARCH=amd64 -DVERSION=1.11.9 ntp-installer.nsi
-;    makensis -DROLE=client -DARCH=amd64 -DVERSION=1.11.9 ntp-installer.nsi
+;    makensis -DROLE=server -DARCH=amd64 -DVERSION=1.11.10 ntp-installer.nsi
+;    makensis -DROLE=client -DARCH=amd64 -DVERSION=1.11.10 ntp-installer.nsi
 ;
 ;  产物命名：<产品名>-Setup-v<版本>-<架构>.exe
-;    SntpServer-Setup-v1.11.9-amd64.exe / SntpClient-Setup-v1.11.9-amd64.exe
+;    SntpServer-Setup-v1.11.10-amd64.exe / SntpClient-Setup-v1.11.10-amd64.exe
 ;
 ;  设计要点（2026-10 改版）：
 ;    1. 向导只留四步：欢迎 → 安装目录 → 安装进度 → 完成。
@@ -51,7 +51,7 @@
   !define ARCH "amd64"
 !endif
 !ifndef VERSION
-  !define VERSION "1.11.9"
+  !define VERSION "1.11.10"
 !endif
 
 ; ---- 产品元信息（按角色区分）----
@@ -294,7 +294,7 @@ Section "注册系统服务" SecService
   ${If} $0 != "0"
     DetailPrint "服务注册失败，退出码 $0"
     MessageBox MB_OK|MB_ICONSTOP \
-      "服务注册失败，安装未完成。$\r$\n$\r$\n可能是服务名被占用或权限不足。可打开「显示详细信息」查看日志，$\r$\n或以管理员身份在命令行重试：$\r$\n$\r$\n  cd /d $INSTDIR$\r$\n  ${BIN_NAME}.exe $2"
+      "服务注册失败，安装未完成。$\r$\n$\r$\n可能是服务名被占用或权限不足。可打开「显示详细信息」查看日志，$\r$\n或以管理员身份在命令行重试：$\r$\n$\r$\n  cd /d $INSTDIR$\r$\n  ${BIN_NAME}.exe $2$\r$\n$\r$\n若系统是 Windows 7：请确认安装包为 1.11.10 或更高版本。$\r$\n1.11.9 及更早的 Windows 版程序在 Win7 上无法启动，$\r$\n表现为一开始安装就报这条错误。"
     SetErrorLevel 1
     Abort
   ${EndIf}

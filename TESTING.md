@@ -47,6 +47,22 @@ install-server.bat /LISTEN=0.0.0.0:123 /WEB=8080
 ```
 **检查点**：`systemctl status SntpServer`（或 `sc query SntpServer`）显示运行中。
 
+### 步骤 1.5：Windows 7 兼容性（1.11.10 起必测）
+在 Win7 SP1 x64 机器上装 `SntpClient-Setup-v1.11.10-amd64.exe`：
+
+1. 向导应一路走到「完成」，**不得**出现「服务注册失败」；
+2. `sc query SntpClient` 为 RUNNING；
+3. 顺手确认程序本体能在该机器跑起来（这一步能区分「工具链不支持」与「权限问题」）：
+   ```bat
+   cd /d C:\Program Files\SntpClient
+   SntpClient.exe status
+   ```
+   **判据**：若报「无法定位程序输入点 ProcessPrng 于动态链接库 bcryptprimitives.dll 上」，
+   说明装的是 1.11.9 或更早的包（用 Go 1.21+ 编译，Win7 不支持），换 1.11.10+ 即可。
+
+> 构建侧已加防回归：`scripts/build.sh` 会在每个 Windows 产物里查 `ProcessPrng` 符号，
+> 命中就当场失败。所以正常构建出来的包不会出现这条错误——出现即代表用了旧包。
+
 ### 步骤 2：服务端时间核对（R11 防污染关键）
 打开 `http://<服务端IP>:8080`，总览页「服务端当前时间」与可信参考对比，误差 < 1s。
 
